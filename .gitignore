@@ -1,0 +1,5 @@
+node_modules/
+.claude/
+instruc.md
+*.log
+.DS_Store

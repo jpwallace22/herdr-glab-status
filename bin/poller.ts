@@ -1,0 +1,123 @@
+#!/usr/bin/env bun
+// Long-lived background poller. Spawned detached by bin/startup.ts (and by any
+// hook that finds it dead). Refreshes every workspace's $mr token on a period,
+// and exits when herdr goes away, when a stop is requested, or when another
+// poller has taken over the state record.
+//
+// Output is not captured by herdr; it goes to <state dir>/poller.log.
+
+import { existsSync } from "node:fs";
+import { loadConfig } from "../src/config";
+import { configDir, herdrSocketPath, stateDir } from "../src/env";
+import { fileLogger } from "../src/log";
+import {
+  isAlive,
+  pollerLogPath,
+  readRecord,
+  removeRecord,
+  stopRequested,
+  writeRecord,
+} from "../src/poller-control";
+import { refreshAll } from "../src/refresh";
+
+const HERDR_FAILURE_LIMIT = 3;
+const SLEEP_SLICE_MS = 10_000;
+
+const log = fileLogger(pollerLogPath(), loadConfig(configDir()).debug);
+
+function shutdown(reason: string, code = 0): never {
+  log.info(`stopping: ${reason}`);
+  const record = readRecord();
+  if (record && record.pid === process.pid) removeRecord();
+  process.exit(code);
+}
+
+// Interruptible sleep: wake early if a stop is requested or herdr's socket
+// disappears, so the poller does not linger for a full interval.
+async function sleepWatching(totalMs: number): Promise<void> {
+  const deadline = Date.now() + totalMs;
+  while (Date.now() < deadline) {
+    const remaining = deadline - Date.now();
+    await Bun.sleep(Math.min(SLEEP_SLICE_MS, remaining));
+    checkExitConditions();
+  }
+}
+
+function checkExitConditions(): void {
+  if (stopRequested()) shutdown("stop requested");
+  const socket = herdrSocketPath();
+  if (socket && !existsSync(socket)) shutdown("herdr socket is gone");
+  const record = readRecord();
+  if (!record || record.pid !== process.pid) shutdown("superseded by another poller");
+}
+
+async function main(): Promise<void> {
+  const existing = readRecord();
+  if (existing && existing.pid !== process.pid && isAlive(existing.pid)) {
+    log.info(`another poller (pid ${existing.pid}) is already running; exiting`);
+    process.exit(0);
+  }
+  if (stopRequested()) {
+    log.info("stop marker present at startup; exiting");
+    process.exit(0);
+  }
+
+  let cfg = loadConfig(configDir(), (m) => log.warn(m));
+  writeRecord({ pid: process.pid, socketPath: herdrSocketPath(), startedUnixMs: Date.now(), intervalMs: cfg.pollIntervalMs });
+  log.info(
+    `poller started (pid ${process.pid}, every ${cfg.pollIntervalMs / 1000}s, state: ${stateDir()}, socket: ${herdrSocketPath() ?? "default"})`,
+  );
+
+  for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"] as const) {
+    process.on(signal, () => shutdown(signal));
+  }
+
+  let herdrFailures = 0;
+  let abortLogged = false;
+
+  for (;;) {
+    checkExitConditions();
+    // Re-read config each cycle so interval/host edits apply without a restart.
+    cfg = loadConfig(configDir(), (m) => log.warn(m));
+
+    const started = Date.now();
+    const summary = await refreshAll(cfg, {
+      ...log,
+      // The abort message is logged once per outage below, not per cycle.
+      error: (m) => {
+        if (!abortLogged) log.error(m);
+      },
+    });
+
+    if (summary.herdrUnavailable) {
+      herdrFailures++;
+      if (herdrFailures >= HERDR_FAILURE_LIMIT) shutdown(`herdr unreachable ${herdrFailures} times in a row`);
+    } else {
+      herdrFailures = 0;
+    }
+
+    if (summary.aborted) {
+      abortLogged = true;
+    } else if (abortLogged) {
+      abortLogged = false;
+      log.info("glab is working again");
+    }
+
+    // One line per cycle (~300/day at the default interval; the log rotates).
+    log.info(
+      `cycle: ${summary.reported} reported, ${summary.cleared} cleared, ${summary.failed} failed in ${Date.now() - started}ms`,
+    );
+
+    const record = readRecord();
+    if (record && record.pid === process.pid && record.intervalMs !== cfg.pollIntervalMs) {
+      writeRecord({ ...record, intervalMs: cfg.pollIntervalMs });
+    }
+
+    await sleepWatching(cfg.pollIntervalMs);
+  }
+}
+
+main().catch((err) => {
+  log.error(`poller crashed: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`);
+  shutdown("crash", 1);
+});

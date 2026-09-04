@@ -1,0 +1,59 @@
+id = "glab-status"
+name = "GitLab MR Status"
+version = "0.1.0"
+min_herdr_version = "0.8.2"
+description = "Shows each workspace's GitLab merge request (iid, draft/merged/closed, pipeline, unresolved threads) as a $mr token in the spaces sidebar."
+platforms = ["macos", "linux"]
+
+# Commands run directly (no shell), so bun is invoked explicitly rather than
+# relying on a shebang + execute bit.
+
+# Runs once per server start. Spawns the detached background poller that keeps
+# every workspace's $mr token fresh (default every 5 minutes) and exits.
+[[startup]]
+command = ["bun", "bin/startup.ts"]
+
+# Immediate (throttled, >=30s per workspace) refresh of the affected workspace
+# when it is created, opened, or focused. Each hook also re-spawns the poller if
+# it is not running, so the plugin self-heals after `herdr plugin link`.
+[[events]]
+on = "workspace.focused"
+command = ["bun", "bin/update.ts"]
+
+[[events]]
+on = "workspace.created"
+command = ["bun", "bin/update.ts"]
+
+[[events]]
+on = "worktree.created"
+command = ["bun", "bin/update.ts"]
+
+[[events]]
+on = "worktree.opened"
+command = ["bun", "bin/update.ts"]
+
+# Manual refresh of every workspace, bypassing the throttle. Bind it to a key:
+#   [[keys.command]]
+#   key = "prefix+shift+m"
+#   type = "plugin_action"
+#   command = "glab-status.refresh"
+[[actions]]
+id = "refresh"
+title = "Refresh GitLab MR status"
+contexts = ["workspace"]
+command = ["bun", "bin/update.ts"]
+
+# Open the current workspace's MR in the browser.
+[[actions]]
+id = "open-mr"
+title = "Open GitLab MR in browser"
+contexts = ["workspace"]
+command = ["bun", "bin/open-mr.ts"]
+
+# Stop the background poller. Tokens then expire after their TTL. The poller is
+# started again by the next server start or by the refresh action.
+[[actions]]
+id = "stop-poller"
+title = "Stop GitLab MR status poller"
+contexts = ["workspace"]
+command = ["bun", "bin/stop.ts"]
