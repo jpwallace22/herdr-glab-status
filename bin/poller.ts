@@ -18,7 +18,7 @@ import {
   stopRequested,
   writeRecord,
 } from "../src/poller-control";
-import { refreshAll } from "../src/refresh";
+import { refreshAll, shouldRetrySoon } from "../src/refresh";
 
 const HERDR_FAILURE_LIMIT = 3;
 const SLEEP_SLICE_MS = 10_000;
@@ -107,7 +107,7 @@ async function main(): Promise<void> {
       log.info("glab is working again");
     }
 
-    const retrying = summary.kept > 0 || summary.herdrUnavailable;
+    const retrying = shouldRetrySoon(summary);
     const sleepMs = retrying ? RETRY_INTERVAL_MS : cfg.pollIntervalMs;
 
     // One line per cycle (~300/day at the default interval; the log rotates).

@@ -162,6 +162,13 @@ export async function refreshWorkspaces(
   return summary;
 }
 
+// Whether the poller should retry soon (a short constant delay) instead of
+// waiting a full poll interval: true when any token was kept in place
+// (transient glab trouble) or herdr itself could not be reached at all.
+export function shouldRetrySoon(summary: RefreshSummary): boolean {
+  return summary.kept > 0 || summary.herdrUnavailable;
+}
+
 // Refresh every workspace herdr knows about.
 export async function refreshAll(cfg: Config, log: Logger, glab?: GlabClient): Promise<RefreshSummary> {
   const workspaces = await listWorkspaces();

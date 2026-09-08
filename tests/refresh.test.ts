@@ -7,7 +7,7 @@ import type { CommandResult } from "../src/exec";
 import type { GlabClient } from "../src/glab";
 import type { Workspace } from "../src/herdr";
 import { silentLogger, type Logger } from "../src/log";
-import { inspectWorkspace, refreshWorkspaces } from "../src/refresh";
+import { inspectWorkspace, refreshAll, refreshWorkspaces, shouldRetrySoon } from "../src/refresh";
 import { lastCheckMs } from "../src/throttle";
 
 // ---------- fakes ----------
@@ -310,6 +310,15 @@ describe("refreshWorkspaces", () => {
     expect(herdrCalls().map((c) => c[2])).toEqual(["wB"]);
   });
 
+  test("unparsable MR JSON clears (not kept) and logs a warning", async () => {
+    const glab = fakeGlab({ "/a": { branch: "b", mrs: { b: ok("<html>not json</html>") } } });
+    const warnings: string[] = [];
+    const log: Logger = { ...silentLogger, warn: (m) => warnings.push(m) };
+    const summary = await refreshWorkspaces([ws("wA", "/a")], cfg, log, glab);
+    expect(summary).toMatchObject({ reported: 0, cleared: 1, kept: 0, aborted: null });
+    expect(warnings.some((w) => w.includes("unexpected output"))).toBe(true);
+  });
+
   test("herdr rejecting a report counts as failed but the loop continues", async () => {
     process.env.FAKE_HERDR_FAIL = "1";
     try {
@@ -320,5 +329,47 @@ describe("refreshWorkspaces", () => {
     } finally {
       delete process.env.FAKE_HERDR_FAIL;
     }
+  });
+
+  test("refreshAll: herdr unreachable → herdrUnavailable, nothing refreshed", async () => {
+    process.env.FAKE_HERDR_FAIL = "1";
+    try {
+      const warnings: string[] = [];
+      const log: Logger = { ...silentLogger, warn: (m) => warnings.push(m) };
+      const summary = await refreshAll(cfg, log);
+      expect(summary).toEqual({ reported: 0, cleared: 0, kept: 0, failed: 0, aborted: null, herdrUnavailable: true });
+      expect(warnings.some((w) => w.includes("could not list workspaces"))).toBe(true);
+    } finally {
+      delete process.env.FAKE_HERDR_FAIL;
+    }
+  });
+});
+
+// ---------- shouldRetrySoon: the poller's fast-retry-after-a-bad-cycle decision ----------
+
+describe("shouldRetrySoon", () => {
+  const clean: Parameters<typeof shouldRetrySoon>[0] = {
+    reported: 3,
+    cleared: 1,
+    kept: 0,
+    failed: 0,
+    aborted: null,
+    herdrUnavailable: false,
+  };
+
+  test("false for a clean cycle (no keeps, herdr reachable)", () => {
+    expect(shouldRetrySoon(clean)).toBe(false);
+  });
+
+  test("true when any token was kept in place", () => {
+    expect(shouldRetrySoon({ ...clean, kept: 1 })).toBe(true);
+  });
+
+  test("true when herdr itself was unreachable, even with no keeps", () => {
+    expect(shouldRetrySoon({ ...clean, herdrUnavailable: true })).toBe(true);
+  });
+
+  test("a failed report/clear alone does not trigger a fast retry", () => {
+    expect(shouldRetrySoon({ ...clean, failed: 2 })).toBe(false);
   });
 });
