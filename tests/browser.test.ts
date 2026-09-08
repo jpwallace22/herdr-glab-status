@@ -9,13 +9,22 @@ import {
   type SupportedBrowser,
 } from "../src/browser";
 import type { CommandResult } from "../src/exec";
+import type { Logger } from "../src/log";
 
 function ok(stdout = ""): CommandResult {
   return { ok: true, exitCode: 0, stdout, stderr: "", spawnError: null, timedOut: false };
 }
 
-function failed(): CommandResult {
-  return { ok: false, exitCode: 1, stdout: "", stderr: "", spawnError: null, timedOut: false };
+function failed(stderr = ""): CommandResult {
+  return { ok: false, exitCode: 1, stdout: "", stderr, spawnError: null, timedOut: false };
+}
+
+function recordingLogger(): { log: Logger; debugLines: string[] } {
+  const debugLines: string[] = [];
+  return {
+    debugLines,
+    log: { debug: (m) => debugLines.push(m), info: () => {}, warn: () => {}, error: () => {} },
+  };
 }
 
 describe("isSupportedBrowser", () => {
@@ -115,5 +124,46 @@ describe("focusOrOpenTab", () => {
       run: async () => failed(),
     });
     expect(result).toBe(false);
+  });
+
+  test("logs whether an existing tab was reused or a new one opened", async () => {
+    const { log, debugLines } = recordingLogger();
+    await focusOrOpenTab({ browser: "Google Chrome", reuseTab: true }, url, {
+      platform: "darwin",
+      run: async () => ok("reused"),
+      log,
+    });
+    expect(debugLines).toEqual(["browser tab reuse: Google Chrome reused for " + url]);
+  });
+
+  test("logs when nothing matched and a new tab was opened instead", async () => {
+    const { log, debugLines } = recordingLogger();
+    await focusOrOpenTab({ browser: "Google Chrome", reuseTab: true }, url, {
+      platform: "darwin",
+      run: async () => ok("opened"),
+      log,
+    });
+    expect(debugLines).toEqual(["browser tab reuse: Google Chrome opened for " + url]);
+  });
+
+  test("logs why it gave up when no browser resolved or the script failed", async () => {
+    const noApp = recordingLogger();
+    await focusOrOpenTab({ browser: null, reuseTab: true }, url, {
+      platform: "darwin",
+      checkRunning: async () => false,
+      log: noApp.log,
+    });
+    expect(noApp.debugLines).toHaveLength(1);
+    expect(noApp.debugLines[0]).toContain("no supported browser running or configured");
+
+    const scriptFailed = recordingLogger();
+    await focusOrOpenTab({ browser: "Arc", reuseTab: true }, url, {
+      platform: "darwin",
+      run: async () => failed("System Events got an error"),
+      log: scriptFailed.log,
+    });
+    expect(scriptFailed.debugLines).toHaveLength(1);
+    expect(scriptFailed.debugLines[0]).toContain("Arc script failed");
+    expect(scriptFailed.debugLines[0]).toContain("System Events got an error");
   });
 });

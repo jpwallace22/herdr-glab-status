@@ -51,7 +51,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  if (await focusOrOpenTab(cfg, mr.webUrl)) return;
+  if (await focusOrOpenTab(cfg, mr.webUrl, { log })) return;
 
   const env: Record<string, string> = { NO_COLOR: "1" };
   if (cfg.host) env.GITLAB_HOST = cfg.host;
