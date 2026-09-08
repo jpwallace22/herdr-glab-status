@@ -11,6 +11,11 @@ export interface MrSummary {
   pipelineStatus: string | null;
   webUrl: string | null;
   projectId: number | null;
+  /** Only read by the `pick-mr` picker; the sidebar label doesn't show it. */
+  title: string;
+  /** user_notes_count from the GitLab API, i.e. total comments (not just
+   * unresolved threads). Only read by the `pick-mr` picker. */
+  commentCount: number | null;
 }
 
 export const PIPELINE_SYMBOLS: Readonly<Record<string, string>> = {
@@ -73,5 +78,7 @@ export function parseMrView(stdout: string): MrSummary | null {
     pipelineStatus,
     webUrl: typeof mr.web_url === "string" ? mr.web_url : null,
     projectId: typeof mr.project_id === "number" ? mr.project_id : null,
+    title: typeof mr.title === "string" ? mr.title : "",
+    commentCount: typeof mr.user_notes_count === "number" ? mr.user_notes_count : null,
   };
 }

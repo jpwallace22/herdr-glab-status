@@ -57,3 +57,14 @@ id = "stop-poller"
 title = "Stop GitLab MR status poller"
 contexts = ["workspace"]
 command = ["bun", "bin/stop.ts"]
+
+# fzf-pick one of your open MRs across every tracked workspace, then open it.
+# Not workspace-scoped (it lists across all of them). Needs a real terminal
+# for fzf's UI, which a herdr-invoked action may not have — see README's
+# "Picking an MR" section; running `bun bin/pick-mr.ts` directly in a pane is
+# the one invocation guaranteed to work.
+[[actions]]
+id = "pick-mr"
+title = "Pick a GitLab MR (fzf)"
+contexts = ["global"]
+command = ["bun", "bin/pick-mr.ts"]

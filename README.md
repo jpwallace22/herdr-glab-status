@@ -84,6 +84,14 @@ key = "prefix+shift+o"
 type = "plugin_action"
 command = "glab-status.open-mr"
 description = "open GitLab MR"
+
+# pick one of your open MRs with fzf (see "Picking an MR" below for the caveat
+# about actions and terminals)
+[[keys.command]]
+key = "prefix+shift+p"
+type = "plugin_action"
+command = "glab-status.pick-mr"
+description = "pick a GitLab MR"
 ```
 
 The same actions work from a shell:
@@ -93,6 +101,38 @@ herdr plugin action invoke refresh --plugin glab-status
 herdr plugin action invoke open-mr --plugin glab-status
 herdr plugin action invoke stop-poller --plugin glab-status
 ```
+
+## Picking an MR
+
+`bin/pick-mr.ts` lists every **open** MR across every workspace herdr tracks
+(one row per workspace's current branch, the same data the sidebar already
+resolves) in an [fzf](https://github.com/junegunn/fzf) picker, sorted with
+the MRs most likely to need your attention first (failed pipeline, unresolved
+threads, missing approvals — drafts sink to the bottom). Selecting a row opens
+it in the browser, reusing `open-mr`'s tab-reuse and notification fallback.
+
+```bash
+bun bin/pick-mr.ts
+```
+
+```
+REPO          MR    CI        APPR  THR  CMT  TITLE
+catalog-ui    !581  ✖ failed  1/3   1    4    feat: update catalog to use a11y-toolkit
+landing-ui    !622  ✔ success 2/3   -    53   chore(e2e): add the service-operations-bot daily triage schedule
+```
+
+It requires `fzf` on PATH (`brew install fzf`) and fails with a clear message
+if it's missing. It makes one extra glab API call per open MR beyond what the
+sidebar refresh already does (for the APPR column, GitLab's approvals
+endpoint) — worth it for a one-shot interactive picker, not for the
+background poller, so that call is never made outside `pick-mr`.
+
+It is also registered as the `pick-mr` action (`herdr plugin action invoke
+pick-mr --plugin glab-status`, or a keybinding as above), but fzf needs a real
+terminal — it reads the row list from stdin but drives its own UI straight
+over `/dev/tty` — and it's not verified that a herdr-invoked action has one.
+Running `bun bin/pick-mr.ts` directly in a pane is the invocation guaranteed
+to work.
 
 ## How it stays fresh
 
@@ -224,9 +264,10 @@ herdr plugin unlink glab-status
 ```
 
 Layout: `herdr-plugin.toml` (manifest), `bin/` (hook and action entrypoints:
-`startup`, `update`, `poller`, `open-mr`, `stop`), `src/` (label formatting,
-branch → MR resolution, discussion paging, glab/herdr wrappers, refresh loop,
-poller control, macOS tab-reuse for `open-mr`), `tests/`.
+`startup`, `update`, `poller`, `open-mr`, `pick-mr`, `stop`), `src/` (label
+formatting, branch → MR resolution, discussion paging, glab/herdr wrappers,
+refresh loop, poller control, macOS tab-reuse for `open-mr`, MR approvals
+parsing, `pick-mr` row collection/sorting/formatting), `tests/`.
 
 Why Bun/TypeScript: it matches the gh-pr reference plugin, needs no build step or
 dependencies (Bun runs `.ts` directly and ships a TOML parser), and gives the
