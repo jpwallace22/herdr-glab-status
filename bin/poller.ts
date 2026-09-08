@@ -22,6 +22,10 @@ import { refreshAll } from "../src/refresh";
 
 const HERDR_FAILURE_LIMIT = 3;
 const SLEEP_SLICE_MS = 10_000;
+// After a cycle that kept any tokens (transient glab trouble) or couldn't
+// reach herdr at all, retry soon instead of waiting a full poll interval, so
+// a laptop that wakes mid-outage recovers within seconds, not minutes.
+const RETRY_INTERVAL_MS = 30_000;
 
 const log = fileLogger(pollerLogPath(), loadConfig(configDir()).debug);
 
@@ -103,9 +107,13 @@ async function main(): Promise<void> {
       log.info("glab is working again");
     }
 
+    const retrying = summary.kept > 0 || summary.herdrUnavailable;
+    const sleepMs = retrying ? RETRY_INTERVAL_MS : cfg.pollIntervalMs;
+
     // One line per cycle (~300/day at the default interval; the log rotates).
     log.info(
-      `cycle: ${summary.reported} reported, ${summary.cleared} cleared, ${summary.failed} failed in ${Date.now() - started}ms`,
+      `cycle: ${summary.reported} reported, ${summary.cleared} cleared, ${summary.kept} kept, ${summary.failed} failed in ${Date.now() - started}ms` +
+        (retrying ? ` (retrying in ${sleepMs / 1000}s)` : ""),
     );
 
     const record = readRecord();
@@ -113,7 +121,7 @@ async function main(): Promise<void> {
       writeRecord({ ...record, intervalMs: cfg.pollIntervalMs });
     }
 
-    await sleepWatching(cfg.pollIntervalMs);
+    await sleepWatching(sleepMs);
   }
 }
 

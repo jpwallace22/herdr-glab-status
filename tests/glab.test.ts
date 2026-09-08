@@ -27,6 +27,14 @@ describe("classifyFailure", () => {
     expect(classifyFailure(failed("", { exitCode: null, spawnError: "spawn glab ENOENT" }))).toBe("missing");
   });
 
+  test("checkout whose remote isn't GitLab (e.g. GitHub) is no_mr, not auth", () => {
+    // glab's own message tells the user to `glab auth login`, but this isn't
+    // an auth failure — the checkout just has no GitLab remote at all.
+    const text =
+      "None of the git remotes configured for this repository point to a known GitLab host. Please use `glab auth login` to tell glab which remote to use.";
+    expect(classifyFailure(failed(text))).toBe("no_mr");
+  });
+
   test("everything else (network, project resolution) is 'other'", () => {
     expect(classifyFailure(failed("dial tcp: lookup gitlab.example.com: no such host"))).toBe("other");
     expect(classifyFailure(failed("x509: certificate signed by unknown authority"))).toBe("other");

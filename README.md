@@ -102,6 +102,7 @@ herdr plugin action invoke stop-poller --plugin glab-status
 | `workspace.focused`, `workspace.created`, `worktree.created`, `worktree.opened` | Refreshes just that workspace, at most once per `throttle_seconds` (default 30) per workspace. Also restarts the poller if it died. |
 | `refresh` action | Refreshes every workspace right away, ignoring the throttle. |
 | Token TTL | Every token is reported with `--ttl-ms` = `poll_interval_seconds × ttl_multiplier` (default 15 min). If the poller dies, rows fade out instead of lying. |
+| Transient `glab` failure (network blip, timeout, an unexpected `glab` error) | The workspace's existing `$mr` token is left exactly as is — no herdr call at all — instead of being blanked. The poller retries in 30s rather than waiting a full `poll_interval_seconds`, so a laptop that wakes with no network catches up quickly; a label that stays wrong keeps aging toward its TTL like any other. |
 
 Per workspace, a refresh is `git branch --show-current`, then
 `glab mr view <branch> --output json` run inside the checkout (so `glab` resolves
@@ -196,8 +197,17 @@ current one — that's outside what AppleScript alone can do reliably.
   holds its pid). Set `debug = true` to log every cycle and label.
 - `glab` missing or unauthenticated: logged once, every `$mr` token is cleared,
   and the poller keeps retrying each cycle until `glab` works again.
-- A single workspace failing (bad remote, deleted project, network blip) clears
-  only that workspace's token; the rest are unaffected.
+- A single workspace with a definite "no MR" answer (no MR for the branch, a
+  deleted project) clears only that workspace's token; the rest are
+  unaffected. A checkout whose remote isn't GitLab at all (e.g. it points to
+  GitHub) is treated the same way — glab's own message suggests `glab auth
+  login`, but that workspace is simply cleared, not treated as an auth
+  failure.
+- A transient failure (network blip, `glab` timing out, an unexpected `glab`
+  error) does **not** clear the token — the last known label is left in place
+  and a warning is logged, and the poller retries in 30s instead of the full
+  interval. A row only goes blank if it stays wrong long enough to hit its
+  TTL.
 - Nothing shows up: check that `$mr` is in `[ui.sidebar.spaces].rows`, that
   `glab mr view <branch> --output json` works inside the checkout, and that
   `herdr workspace list` reports a `worktree.checkout_path` for the workspace.

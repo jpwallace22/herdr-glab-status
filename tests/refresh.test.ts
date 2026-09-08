@@ -146,10 +146,31 @@ describe("inspectWorkspace decisions", () => {
     expect((await inspectWorkspace(ws("w1", "/w"), cfg, glab)).kind).toBe("clear");
   });
 
-  test("other glab failure → clear (not abort)", async () => {
+  test("other glab failure (network/etc) → keep, not clear or abort", async () => {
     const glab = fakeGlab({ "/w": { branch: "b", mrs: { b: fail("x509: certificate signed by unknown authority") } } });
     const d = await inspectWorkspace(ws("w1", "/w"), cfg, glab);
-    expect(d).toMatchObject({ kind: "clear", reason: expect.stringContaining("x509") });
+    expect(d).toMatchObject({ kind: "keep", reason: expect.stringContaining("x509") });
+  });
+
+  test("timed-out glab call → keep", async () => {
+    const glab = fakeGlab({ "/w": { branch: "b", mrs: { b: fail("", { timedOut: true }) } } });
+    const d = await inspectWorkspace(ws("w1", "/w"), cfg, glab);
+    expect(d.kind).toBe("keep");
+  });
+
+  test("checkout on a non-GitLab remote (e.g. GitHub) → clear as no_mr, not abort", async () => {
+    const glab = fakeGlab({
+      "/w": {
+        branch: "b",
+        mrs: {
+          b: fail(
+            "None of the git remotes configured for this repository point to a known GitLab host. Please use `glab auth login` to tell glab which remote to use.",
+          ),
+        },
+      },
+    });
+    const d = await inspectWorkspace(ws("w1", "/w"), cfg, glab);
+    expect(d).toMatchObject({ kind: "clear", reason: expect.stringContaining("no merge request") });
   });
 
   test("unauthenticated glab → abort", async () => {
@@ -224,7 +245,7 @@ describe("refreshWorkspaces", () => {
     });
     const before = Date.now();
     const summary = await refreshWorkspaces([ws("wA", "/a"), ws("wB", "/b"), ws("wC", "/c")], cfg, silentLogger, glab);
-    expect(summary).toEqual({ reported: 1, cleared: 2, failed: 0, aborted: null, herdrUnavailable: false });
+    expect(summary).toEqual({ reported: 1, cleared: 2, kept: 0, failed: 0, aborted: null, herdrUnavailable: false });
 
     const calls = herdrCalls();
     expect(calls).toHaveLength(3);
@@ -263,7 +284,7 @@ describe("refreshWorkspaces", () => {
     ]);
   });
 
-  test("a throwing glab client for one workspace does not stop the others", async () => {
+  test("a throwing glab client for one workspace does not stop the others, and keeps its token", async () => {
     const glab = fakeGlab({ "/a": { branch: "a", mrs: { a: mr(1) } }, "/c": { branch: "c", mrs: { c: mr(3) } } });
     glab.currentBranch = async (cwd) => {
       if (cwd === "/b") throw new Error("kaboom");
@@ -272,9 +293,21 @@ describe("refreshWorkspaces", () => {
     const warnings: string[] = [];
     const log: Logger = { ...silentLogger, warn: (m) => warnings.push(m) };
     const summary = await refreshWorkspaces([ws("wA", "/a"), ws("wB", "/b"), ws("wC", "/c")], cfg, log, glab);
-    expect(summary).toMatchObject({ reported: 2, cleared: 1, aborted: null });
+    expect(summary).toMatchObject({ reported: 2, cleared: 0, kept: 1, aborted: null });
     expect(warnings.some((w) => w.includes("kaboom"))).toBe(true);
-    expect(herdrCalls().map((c) => c[2])).toEqual(["wA", "wB", "wC"]);
+    // wB's token is left untouched: no herdr call at all for it.
+    expect(herdrCalls().map((c) => c[2])).toEqual(["wA", "wC"]);
+  });
+
+  test("a transient glab failure keeps the token (no herdr call) and is counted as kept", async () => {
+    const glab = fakeGlab({
+      "/a": { branch: "a", mrs: { a: fail("dial tcp: lookup gitlab.example.com: no such host") } },
+      "/b": { branch: "b", mrs: { b: mr(3) } },
+    });
+    const summary = await refreshWorkspaces([ws("wA", "/a"), ws("wB", "/b")], cfg, silentLogger, glab);
+    expect(summary).toMatchObject({ reported: 1, cleared: 0, kept: 1, failed: 0, aborted: null });
+    // No herdr call at all for wA; its existing token and TTL are untouched.
+    expect(herdrCalls().map((c) => c[2])).toEqual(["wB"]);
   });
 
   test("herdr rejecting a report counts as failed but the loop continues", async () => {

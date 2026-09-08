@@ -10,10 +10,15 @@ import { recordCheck } from "./throttle";
 // What to do with a workspace's `$mr` token.
 export type Decision =
   | { kind: "clear"; reason: string }
+  | { kind: "keep"; reason: string }
   | { kind: "report"; label: string; mr: MrSummary; unresolved: number | null; warning: string | null }
   | { kind: "abort"; failure: "auth" | "missing"; message: string };
 
 const clear = (reason: string): Decision => ({ kind: "clear", reason });
+// A transient failure: leave the existing token (and its TTL) untouched
+// rather than blanking it, so a laptop waking with no network doesn't wipe
+// every workspace's label. Genuinely stale rows still age out via the TTL.
+const keep = (reason: string): Decision => ({ kind: "keep", reason });
 
 function abortFor(failure: "auth" | "missing", detail: string, cfg: Config): Decision {
   const message =
@@ -35,7 +40,7 @@ export async function inspectWorkspace(ws: Workspace, cfg: Config, glab: GlabCli
     const failure = classifyFailure(view);
     if (failure === "no_mr") return clear(`no merge request for ${mrRefArg(ref)}`);
     if (failure === "auth" || failure === "missing") return abortFor(failure, briefError(view), cfg);
-    return clear(`glab mr view failed: ${briefError(view)}`);
+    return keep(`glab mr view failed: ${briefError(view)}`);
   }
 
   const mr = parseMrView(view.stdout);
@@ -72,6 +77,8 @@ function isAbort(value: unknown): value is Extract<Decision, { kind: "abort" }> 
 export interface RefreshSummary {
   reported: number;
   cleared: number;
+  /** Transient failure: existing token left in place, no herdr call made. */
+  kept: number;
   /** herdr rejected a report/clear call. */
   failed: number;
   /** Set when glab was unusable and remaining tokens were cleared. */
@@ -94,6 +101,11 @@ export async function applyDecision(ws: Workspace, decision: Decision, cfg: Conf
     log.debug(`${ws.label}: ${decision.label}`);
     return true;
   }
+  if (decision.kind === "keep") {
+    // No herdr call: the existing token (and its TTL) is left exactly as is.
+    log.warn(`${ws.label}: ${decision.reason}`);
+    return true;
+  }
   const result = await clearToken(ws.workspaceId, seq);
   if (!result.ok) {
     log.warn(`${ws.label}: herdr rejected token clear: ${briefError(result)}`);
@@ -112,7 +124,7 @@ export async function refreshWorkspaces(
   log: Logger,
   glab: GlabClient = createGlabClient(cfg),
 ): Promise<RefreshSummary> {
-  const summary: RefreshSummary = { reported: 0, cleared: 0, failed: 0, aborted: null, herdrUnavailable: false };
+  const summary: RefreshSummary = { reported: 0, cleared: 0, kept: 0, failed: 0, aborted: null, herdrUnavailable: false };
 
   for (let i = 0; i < workspaces.length; i++) {
     const ws = workspaces[i]!;
@@ -120,8 +132,9 @@ export async function refreshWorkspaces(
     try {
       decision = await inspectWorkspace(ws, cfg, glab);
     } catch (err) {
-      // One bad workspace must never take the loop down.
-      decision = clear(`unexpected error: ${err instanceof Error ? err.message : String(err)}`);
+      // One bad workspace must never take the loop down, and an unexpected
+      // throw is itself a transient condition, not proof there is no MR.
+      decision = keep(`unexpected error: ${err instanceof Error ? err.message : String(err)}`);
     }
     recordCheck(ws.workspaceId, Date.now());
 
@@ -142,6 +155,7 @@ export async function refreshWorkspaces(
     const ok = await applyDecision(ws, decision, cfg, log);
     if (!ok) summary.failed++;
     else if (decision.kind === "report") summary.reported++;
+    else if (decision.kind === "keep") summary.kept++;
     else summary.cleared++;
   }
 
@@ -153,7 +167,7 @@ export async function refreshAll(cfg: Config, log: Logger, glab?: GlabClient): P
   const workspaces = await listWorkspaces();
   if (workspaces === null) {
     log.warn("could not list workspaces (is the herdr server running?)");
-    return { reported: 0, cleared: 0, failed: 0, aborted: null, herdrUnavailable: true };
+    return { reported: 0, cleared: 0, kept: 0, failed: 0, aborted: null, herdrUnavailable: true };
   }
   return refreshWorkspaces(workspaces, cfg, log, glab);
 }
