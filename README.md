@@ -182,7 +182,9 @@ Automation permission for Herdr/`osascript` to control that browser the first
 time `open-mr` runs; approve it once and it won't ask again. Set
 `reuse_tab = false` to always open a new tab, matching the old behavior. There
 is no equivalent on Linux or for other browsers (e.g. Safari, Firefox); those
-always open a new tab via `glab mr view --web`.
+always open a new tab via `glab mr view --web`. A minimized window is
+un-minimized, but a window on a different macOS Space is not brought to the
+current one — that's outside what AppleScript alone can do reliably.
 
 ## Troubleshooting
 

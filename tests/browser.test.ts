@@ -40,26 +40,40 @@ describe("isSupportedBrowser", () => {
 });
 
 describe("scriptInvocation", () => {
-  test("Chromium apps get the shared script with app name and URL as argv", () => {
+  const url = "https://gitlab.example.com/g/p/-/merge_requests/1";
+
+  test("each Chromium app gets its own script with a literal `tell application`", () => {
     for (const app of CHROMIUM_BROWSERS) {
-      const { script, args } = scriptInvocation(app, "https://gitlab.example.com/g/p/-/merge_requests/1");
-      expect(args).toEqual([app, "https://gitlab.example.com/g/p/-/merge_requests/1"]);
-      expect(script).toContain("tell application appName");
+      const { script, args } = scriptInvocation(app, url);
+      expect(args).toEqual([url]);
+      expect(script).toContain(`tell application "${app}"`);
       expect(script).toContain("active tab index");
-      // Regression guard: `active tab index` is Chrome-specific vocabulary,
-      // and the compiler can only resolve it against a *variable* app name
-      // (appName) if it's told which app's terminology to use up front.
-      // Without this wrapper, osascript fails to even compile the script
-      // (syntax error -2740), silently falling back to always-open-new-tab.
-      expect(script).toContain('using terms from application "Google Chrome"');
+      // Regression guard: a variable app name (`tell application appName`)
+      // can't compile against `active tab index` — AppleScript resolves
+      // multi-word properties against a literal app name at compile time.
+      // Baking in the literal here also means driving Brave/Edge never
+      // depends on Chrome being installed.
+      for (const other of CHROMIUM_BROWSERS) {
+        if (other !== app) expect(script).not.toContain(`tell application "${other}"`);
+      }
+      // Regression guard: an app with 0 windows must not error out.
+      expect(script).toContain("(count of windows) is 0");
+      // Regression guard: matching must ignore a fragment/query string, since
+      // GitLab rewrites the URL as you interact with an MR (diff tabs, note
+      // anchors), not just strip a trailing slash.
+      expect(script).toContain("normalizeUrl");
     }
   });
 
-  test("Arc gets its own script with just the URL as argv", () => {
-    const { script, args } = scriptInvocation("Arc", "https://gitlab.example.com/g/p/-/merge_requests/1");
-    expect(args).toEqual(["https://gitlab.example.com/g/p/-/merge_requests/1"]);
+  test("Arc gets its own script, with just the URL as argv", () => {
+    const { script, args } = scriptInvocation("Arc", url);
+    expect(args).toEqual([url]);
     expect(script).toContain('tell application "Arc"');
     expect(script).toContain("tell t to select");
+    // Regression guard: Arc can be running with 0 windows (all closed, app
+    // still open); `front window` would error without this.
+    expect(script).toContain("(count of windows) is 0");
+    expect(script).toContain("normalizeUrl");
   });
 });
 
@@ -121,7 +135,7 @@ describe("focusOrOpenTab", () => {
     const result = await focusOrOpenTab({ browser: "Brave Browser", reuseTab: true }, url, { platform: "darwin", run });
     expect(result).toBe(true);
     expect(calls).toHaveLength(1);
-    expect(calls[0]?.args).toEqual(["Brave Browser", url]);
+    expect(calls[0]?.args).toEqual([url]);
   });
 
   test("false when the script itself fails", async () => {

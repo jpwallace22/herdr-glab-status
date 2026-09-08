@@ -1,13 +1,13 @@
 // Best-effort "open or focus a browser tab" for the `open-mr` action, so
 // repeatedly invoking it doesn't pile up duplicate tabs for the same MR.
 //
-// Only macOS is supported: it is the one platform with an AppleScript
-// dictionary Herdr can drive from a plugin command. Chrome, Brave, and
-// Microsoft Edge share the same Chromium `tabs of window` / `active tab
-// index` dictionary; Arc ships a different one (a tab is selected directly,
-// not via an index property on its window). Every other platform, and every
-// other browser, keeps the old behavior of always opening a new tab — see
-// bin/open-mr.ts's fallback to `glab mr view --web`.
+// macOS only: it's the one platform with an AppleScript dictionary Herdr can
+// drive from a plugin command. Chrome, Brave, and Edge share the same
+// Chromium `tabs of window` / `active tab index` dictionary; Arc's is
+// different (a tab is selected directly, not via an index property on its
+// window). Every other platform, and every other browser, keeps the old
+// behavior of always opening a new tab — see bin/open-mr.ts's fallback to
+// `glab mr view --web`.
 
 import type { Config } from "./config";
 import { runCommand, type CommandResult } from "./exec";
@@ -22,72 +22,62 @@ export function isSupportedBrowser(value: string): value is SupportedBrowser {
   return (SUPPORTED_BROWSERS as readonly string[]).includes(value);
 }
 
-// Both scripts print "reused" or "opened" as their last expression (which
-// osascript writes to stdout), so the caller can tell whether it actually
-// found an existing tab instead of always taking the "it ran fine" path —
-// the fallback branch that opens a new tab when nothing matches means a
-// broken URL comparison would otherwise look identical to success.
-//
-// URLs are compared with a trailing "/" stripped from both sides, since a
-// browser can normalize a bare path's trailing slash independently of what
-// `glab` reports as the MR's web_url.
-
-const STRIP_TRAILING_SLASH = `
-on stripTrailingSlash(u)
-  if u ends with "/" then
-    return text 1 thru -2 of u
-  else
-    return u
-  end if
-end stripTrailingSlash
+// Shared by both dictionaries: compare URLs with any fragment/query string
+// and a trailing "/" stripped. GitLab rewrites the tab's URL as you interact
+// with an MR (diff tabs, note anchors, etc.), so matching only the path
+// keeps a tab "found" across that instead of only the instant it was opened.
+const NORMALIZE_URL = `
+on normalizeUrl(u)
+  set hashPos to offset of "#" in u
+  if hashPos > 0 then set u to text 1 thru (hashPos - 1) of u
+  set queryPos to offset of "?" in u
+  if queryPos > 0 then set u to text 1 thru (queryPos - 1) of u
+  if u ends with "/" then set u to text 1 thru -2 of u
+  return u
+end normalizeUrl
 `;
 
-// Chromium dictionary (Chrome, Brave, Edge): every window has a `tabs` list
-// and a settable `active tab index`. Takes the app name and target URL as
-// argv so one script serves all three apps.
+// Both scripts take the target URL as the sole argv and print "reused" or
+// "opened" as their last expression (osascript writes it to stdout) — both
+// count as "the script ran fine", so this is the only way to tell whether
+// the URL match found a prior tab or silently opened a new one.
 //
-// `tell application appName` targets whichever app the variable holds at
-// runtime, but AppleScript normally resolves app-specific vocabulary (like
-// the two-word property `active tab index`) by loading that app's
-// terminology dictionary at *compile* time from a literal name in `tell
-// application "..."` — a variable gives it nothing to load, so it parses
-// `active tab index` as three bare words and fails with a syntax error
-// before ever running. `using terms from application "Google Chrome"` tells
-// the compiler which dictionary to parse against while leaving the actual
-// runtime target to `appName`; safe here since Chrome, Brave, and Edge share
-// byte-identical AppleScript dictionaries.
-const CHROMIUM_SCRIPT = `
-${STRIP_TRAILING_SLASH}
+// The app name is a literal in `tell application "..."`, not an argv
+// variable: AppleScript resolves multi-word app vocabulary (e.g. `active tab
+// index`) against a literal name at compile time, so a variable there fails
+// to compile. A literal per app also means driving Brave or Edge never
+// depends on Chrome being installed.
+function chromiumScript(app: (typeof CHROMIUM_BROWSERS)[number]): string {
+  return `
+${NORMALIZE_URL}
 on run argv
-  set appName to item 1 of argv
-  set targetURL to my stripTrailingSlash(item 2 of argv)
+  set targetURL to my normalizeUrl(item 1 of argv)
   set didFocus to false
-  using terms from application "Google Chrome"
-    tell application appName
-      activate
-      repeat with w in windows
-        set idx to 0
-        repeat with t in tabs of w
-          set idx to idx + 1
-          try
-            if my stripTrailingSlash(URL of t) is targetURL then
-              set active tab index of w to idx
-              set index of w to 1
-              set didFocus to true
-              exit repeat
-            end if
-          end try
-        end repeat
-        if didFocus then exit repeat
+  tell application "${app}"
+    activate
+    repeat with w in windows
+      set idx to 0
+      repeat with t in tabs of w
+        set idx to idx + 1
+        try
+          if my normalizeUrl(URL of t) is targetURL then
+            set active tab index of w to idx
+            if miniaturized of w then set miniaturized of w to false
+            set index of w to 1
+            set didFocus to true
+            exit repeat
+          end if
+        end try
       end repeat
-      if not didFocus then
-        if (count of windows) is 0 then
-          make new window
-        end if
-        tell window 1 to make new tab with properties {URL:item 2 of argv}
+      if didFocus then exit repeat
+    end repeat
+    if not didFocus then
+      if (count of windows) is 0 then
+        make new window
       end if
-    end tell
-  end using terms from
+      tell window 1 to make new tab with properties {URL:item 1 of argv}
+    end if
+  end tell
   if didFocus then
     return "reused"
   else
@@ -95,20 +85,19 @@ on run argv
   end if
 end run
 `.trim();
+}
 
-// Arc's dictionary: a tab is focused by selecting it directly, not by
-// setting an index property on its window.
 const ARC_SCRIPT = `
-${STRIP_TRAILING_SLASH}
+${NORMALIZE_URL}
 on run argv
-  set targetURL to my stripTrailingSlash(item 1 of argv)
+  set targetURL to my normalizeUrl(item 1 of argv)
   set didFocus to false
   tell application "Arc"
     activate
     repeat with w in windows
       repeat with t in tabs of w
         try
-          if my stripTrailingSlash(URL of t) is targetURL then
+          if my normalizeUrl(URL of t) is targetURL then
             tell t to select
             set didFocus to true
             exit repeat
@@ -118,6 +107,9 @@ on run argv
       if didFocus then exit repeat
     end repeat
     if not didFocus then
+      if (count of windows) is 0 then
+        make new window
+      end if
       tell front window to make new tab with properties {URL:item 1 of argv}
     end if
   end tell
@@ -132,7 +124,7 @@ end run
 // The osascript script + argv (after `--`) for a given app and target URL.
 // Pure, so the app-specific dispatch is unit-tested without shelling out.
 export function scriptInvocation(app: SupportedBrowser, url: string): { script: string; args: string[] } {
-  return app === "Arc" ? { script: ARC_SCRIPT, args: [url] } : { script: CHROMIUM_SCRIPT, args: [app, url] };
+  return { script: app === "Arc" ? ARC_SCRIPT : chromiumScript(app), args: [url] };
 }
 
 export type IsRunning = (app: SupportedBrowser) => Promise<boolean>;
@@ -144,8 +136,8 @@ async function isRunning(app: SupportedBrowser): Promise<boolean> {
 
 // The app to target: an explicit config override, or the first supported
 // browser that is already running. Nothing is launched just to check this,
-// so a workspace where none of them is open yet still falls straight back
-// to the caller's normal "open a new tab" behavior.
+// so a workspace where none of them is open yet falls straight back to the
+// caller's normal "open a new tab" behavior.
 export async function resolveBrowserApp(
   cfg: Pick<Config, "browser">,
   checkRunning: IsRunning = isRunning,
@@ -165,14 +157,9 @@ async function runOsascript(script: string, args: string[]): Promise<CommandResu
 
 // Focus the MR's tab if a supported browser already has it open, or open a
 // new tab in that browser. Returns false (never throws) whenever tab reuse
-// does not apply — not macOS, `reuse_tab = false`, no supported browser
+// doesn't apply — not macOS, `reuse_tab = false`, no supported browser
 // resolved, or the AppleScript call itself failed — so the caller can fall
-// back to its normal "open a new tab" path.
-//
-// Logs at debug level which app was targeted and whether the script actually
-// found and reused an existing tab vs. fell through to opening a new one —
-// both count as success (a working browser call), so this is the only signal
-// that the URL match itself is or isn't finding tabs opened by a prior run.
+// back to its normal "open a new tab" path. Logs the outcome at debug level.
 export async function focusOrOpenTab(
   cfg: Pick<Config, "browser" | "reuseTab">,
   url: string,
