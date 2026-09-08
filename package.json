@@ -1,6 +1,6 @@
 {
   "name": "herdr-glab-status",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "description": "herdr plugin that shows each workspace's GitLab merge request status in the spaces sidebar",

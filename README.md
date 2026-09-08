@@ -155,12 +155,34 @@ ttl_multiplier = 3
 # Count unresolved threads (one extra API call per MR). Default true.
 count_unresolved = true
 
+# open-mr: focus an already-open tab for the MR instead of always opening a
+# new one. Only takes effect on macOS with Google Chrome, Brave Browser,
+# Microsoft Edge, or Arc. Default true.
+reuse_tab = true
+
+# open-mr: which app to target for tab reuse. Default: auto-detect the first
+# of the apps above that is already running.
+# browser = "Google Chrome"
+
 # Verbose logging. Default false.
 debug = false
 ```
 
 Changes are picked up on the poller's next cycle; hooks read the file on every
 run.
+
+### Tab reuse for `open-mr`
+
+On macOS, `open-mr` focuses the MR's existing tab instead of opening a new one
+if it finds it already open in Google Chrome, Brave Browser, Microsoft Edge,
+or Arc — whichever `browser` names, or otherwise the first of those four
+already running (checked in that order; nothing is launched just to check).
+It drives the browser with AppleScript (`osascript`), so macOS will prompt for
+Automation permission for Herdr/`osascript` to control that browser the first
+time `open-mr` runs; approve it once and it won't ask again. Set
+`reuse_tab = false` to always open a new tab, matching the old behavior. There
+is no equivalent on Linux or for other browsers (e.g. Safari, Firefox); those
+always open a new tab via `glab mr view --web`.
 
 ## Troubleshooting
 
@@ -192,7 +214,7 @@ herdr plugin unlink glab-status
 Layout: `herdr-plugin.toml` (manifest), `bin/` (hook and action entrypoints:
 `startup`, `update`, `poller`, `open-mr`, `stop`), `src/` (label formatting,
 branch → MR resolution, discussion paging, glab/herdr wrappers, refresh loop,
-poller control), `tests/`.
+poller control, macOS tab-reuse for `open-mr`), `tests/`.
 
 Why Bun/TypeScript: it matches the gh-pr reference plugin, needs no build step or
 dependencies (Bun runs `.ts` directly and ships a TOML parser), and gives the

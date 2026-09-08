@@ -1,6 +1,6 @@
 id = "glab-status"
 name = "GitLab MR Status"
-version = "0.1.0"
+version = "0.2.0"
 min_herdr_version = "0.8.2"
 description = "Shows each workspace's GitLab merge request (iid, draft/merged/closed, pipeline, unresolved threads) as a $mr token in the spaces sidebar."
 platforms = ["macos", "linux"]

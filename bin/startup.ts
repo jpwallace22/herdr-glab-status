@@ -30,6 +30,16 @@ const CONFIG_TEMPLATE = `# glab-status plugin configuration. Every key is option
 # Count unresolved discussion threads (one extra API call per MR). Default true.
 # count_unresolved = true
 
+# open-mr: focus an already-open tab for the MR instead of always opening a
+# new one. Only takes effect on macOS with Google Chrome, Brave Browser,
+# Microsoft Edge, or Arc. Default true.
+# reuse_tab = true
+
+# open-mr: which app to target for tab reuse. Default: auto-detect the first
+# of the apps above that is already running. One of "Google Chrome",
+# "Brave Browser", "Microsoft Edge", "Arc".
+# browser = "Google Chrome"
+
 # Verbose logging to herdr's plugin log and the poller log. Default false.
 # debug = false
 `;

@@ -26,6 +26,8 @@ describe("parseConfig", () => {
       host: "gitlab.example.com",
       glab_path: "/usr/local/bin/glab",
       count_unresolved: false,
+      browser: "Brave Browser",
+      reuse_tab: false,
       debug: true,
     });
     expect(cfg).toEqual({
@@ -35,6 +37,8 @@ describe("parseConfig", () => {
       host: "gitlab.example.com",
       glabPath: "/usr/local/bin/glab",
       countUnresolved: false,
+      browser: "Brave Browser",
+      reuseTab: false,
       debug: true,
     });
     expect(tokenTtlMs(cfg)).toBe(300_000);
@@ -50,12 +54,14 @@ describe("parseConfig", () => {
         host: "",
         glab_path: 42,
         count_unresolved: "yes",
+        browser: "Internet Explorer",
+        reuse_tab: "yes",
         debug: 1,
       },
       (m) => warnings.push(m),
     );
     expect(cfg).toEqual(DEFAULT_CONFIG);
-    expect(warnings).toHaveLength(7);
+    expect(warnings).toHaveLength(9);
   });
 
   test("clamps too-small poll intervals", () => {
