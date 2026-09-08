@@ -45,36 +45,49 @@ end stripTrailingSlash
 // Chromium dictionary (Chrome, Brave, Edge): every window has a `tabs` list
 // and a settable `active tab index`. Takes the app name and target URL as
 // argv so one script serves all three apps.
+//
+// `tell application appName` targets whichever app the variable holds at
+// runtime, but AppleScript normally resolves app-specific vocabulary (like
+// the two-word property `active tab index`) by loading that app's
+// terminology dictionary at *compile* time from a literal name in `tell
+// application "..."` — a variable gives it nothing to load, so it parses
+// `active tab index` as three bare words and fails with a syntax error
+// before ever running. `using terms from application "Google Chrome"` tells
+// the compiler which dictionary to parse against while leaving the actual
+// runtime target to `appName`; safe here since Chrome, Brave, and Edge share
+// byte-identical AppleScript dictionaries.
 const CHROMIUM_SCRIPT = `
 ${STRIP_TRAILING_SLASH}
 on run argv
   set appName to item 1 of argv
   set targetURL to my stripTrailingSlash(item 2 of argv)
   set didFocus to false
-  tell application appName
-    activate
-    repeat with w in windows
-      set idx to 0
-      repeat with t in tabs of w
-        set idx to idx + 1
-        try
-          if my stripTrailingSlash(URL of t) is targetURL then
-            set active tab index of w to idx
-            set index of w to 1
-            set didFocus to true
-            exit repeat
-          end if
-        end try
+  using terms from application "Google Chrome"
+    tell application appName
+      activate
+      repeat with w in windows
+        set idx to 0
+        repeat with t in tabs of w
+          set idx to idx + 1
+          try
+            if my stripTrailingSlash(URL of t) is targetURL then
+              set active tab index of w to idx
+              set index of w to 1
+              set didFocus to true
+              exit repeat
+            end if
+          end try
+        end repeat
+        if didFocus then exit repeat
       end repeat
-      if didFocus then exit repeat
-    end repeat
-    if not didFocus then
-      if (count of windows) is 0 then
-        make new window
+      if not didFocus then
+        if (count of windows) is 0 then
+          make new window
+        end if
+        tell window 1 to make new tab with properties {URL:item 2 of argv}
       end if
-      tell window 1 to make new tab with properties {URL:item 2 of argv}
-    end if
-  end tell
+    end tell
+  end using terms from
   if didFocus then
     return "reused"
   else

@@ -46,6 +46,12 @@ describe("scriptInvocation", () => {
       expect(args).toEqual([app, "https://gitlab.example.com/g/p/-/merge_requests/1"]);
       expect(script).toContain("tell application appName");
       expect(script).toContain("active tab index");
+      // Regression guard: `active tab index` is Chrome-specific vocabulary,
+      // and the compiler can only resolve it against a *variable* app name
+      // (appName) if it's told which app's terminology to use up front.
+      // Without this wrapper, osascript fails to even compile the script
+      // (syntax error -2740), silently falling back to always-open-new-tab.
+      expect(script).toContain('using terms from application "Google Chrome"');
     }
   });
 
