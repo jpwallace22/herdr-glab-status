@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { isSupportedBrowser, SUPPORTED_BROWSERS, type SupportedBrowser } from "./browser";
 import { configDir } from "./env";
 
 export interface Config {
@@ -15,6 +16,10 @@ export interface Config {
   glabPath: string | null;
   /** Count unresolved discussion threads (one extra API call per MR). */
   countUnresolved: boolean;
+  /** `open-mr`: force this Chrome-family app instead of auto-detecting the first one already running. macOS only. */
+  browser: SupportedBrowser | null;
+  /** `open-mr`: focus an already-open tab for the MR instead of always opening a new one. macOS + a supported browser only. */
+  reuseTab: boolean;
   /** Verbose logging. */
   debug: boolean;
 }
@@ -26,6 +31,8 @@ export const DEFAULT_CONFIG: Readonly<Config> = {
   host: null,
   glabPath: null,
   countUnresolved: true,
+  browser: null,
+  reuseTab: true,
   debug: false,
 };
 
@@ -99,6 +106,20 @@ export function parseConfig(raw: unknown, warn: Warn = () => {}): Config {
   if (r.count_unresolved !== undefined) {
     if (typeof r.count_unresolved !== "boolean") warn("count_unresolved must be a boolean; ignoring");
     else cfg.countUnresolved = r.count_unresolved;
+  }
+
+  if (r.browser !== undefined) {
+    const value = nonEmptyString(r.browser);
+    if (value === null || !isSupportedBrowser(value)) {
+      warn(`browser must be one of ${SUPPORTED_BROWSERS.join(", ")}; ignoring`);
+    } else {
+      cfg.browser = value;
+    }
+  }
+
+  if (r.reuse_tab !== undefined) {
+    if (typeof r.reuse_tab !== "boolean") warn("reuse_tab must be a boolean; ignoring");
+    else cfg.reuseTab = r.reuse_tab;
   }
 
   if (r.debug !== undefined) {
