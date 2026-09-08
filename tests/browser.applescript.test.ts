@@ -1,24 +1,16 @@
-// Every test in browser.test.ts mocks the AppleScript's execution — none of
-// them run the actual script. That's how a broken *runtime* property access
-// (Chrome erroring on an unsupported property) shipped with a fully green
-// `bun test`: the mock always says "it worked", regardless of what the real
-// script does.
+// Real, non-mocked execution of the AppleScript in src/browser.ts —
+// browser.test.ts mocks the script's execution, so it can't catch a broken
+// *runtime* property access. Skipped automatically outside macOS or where
+// osascript/osacompile aren't installed, so it never affects `bun test`'s
+// "no network, no herdr needed" guarantee on Linux or CI without Xcode
+// command line tools.
 //
-// This file closes part of that gap by actually invoking `osascript` /
-// `osacompile` — no mocking — skipped automatically outside macOS or where
-// they aren't installed, so it never affects `bun test`'s "no network, no
-// herdr needed" guarantee on Linux or CI without Xcode command line tools.
-//
-// What this still can NOT catch: whether a property this script references
-// (e.g. `active tab index`) actually exists on a real, running browser's
-// AppleScript dictionary. `osacompile` only checks syntax; `osascript`
-// against `normalizeUrl` only exercises app-independent string logic.
-// Verifying an app-specific property genuinely requires that app installed
-// and running, which isn't available in an automated test environment here
-// — see src/browser.ts's `chromiumScript`/`ARC_SCRIPT` comments for how the
-// scripts are structured so a property like that failing can, at worst,
-// leave a matched tab unfocused, and can no longer flip "reused" into
-// "opened".
+// Still can't catch: whether a property referenced here (e.g. `active tab
+// index`) actually exists on a real, running browser's dictionary —
+// `osacompile` only checks syntax, and normalizeUrl only exercises
+// app-independent string logic. That needs the real app installed and
+// running. See src/browser.ts for how the scripts are structured so a
+// property like that failing leaves a tab unfocused rather than duplicated.
 
 import { describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -31,13 +23,12 @@ const hasOsascript = process.platform === "darwin" && Bun.which("osascript") !==
 const hasOsacompile = process.platform === "darwin" && Bun.which("osacompile") !== null;
 
 // Chrome/Brave/Edge's scripts compile only against an app that's actually
-// installed (their compiler resolves `active tab index` from that specific
-// app's dictionary at compile time — see src/browser.ts). Asserting they all
-// compile unconditionally would make this suite depend on which of the three
-// happen to be on the machine running it, which is not a property of the
-// code. Each is checked only if it's actually there. Arc's script doesn't
-// need Arc installed to compile (its properties are single words, not
-// dictionary-resolved), so it isn't gated this way.
+// installed (the compiler resolves `active tab index` from that app's
+// dictionary at compile time — see src/browser.ts), so each is checked only
+// if it's actually there; asserting all three unconditionally would make
+// this suite depend on the machine, not the code. Arc's script doesn't need
+// Arc installed to compile (its properties are single words), so it isn't
+// gated this way.
 function isInstalled(app: string): boolean {
   return existsSync(`/Applications/${app}.app`) || existsSync(join(homedir(), "Applications", `${app}.app`));
 }

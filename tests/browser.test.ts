@@ -77,18 +77,11 @@ describe("scriptInvocation", () => {
   });
 });
 
-// A prior version set `didFocus to true` and did the "bring it to front"
-// work in the same `try` block as the URL comparison. An unverified property
-// access there (miniaturized of w — since removed) threw at runtime, was
-// swallowed by that same try, and skipped `didFocus`/`exit repeat` right
-// along with it — so the script always fell through to "opened" a new tab,
-// even on the second call for the exact same MR, despite `bun test` being
-// green throughout (every test here mocks execution; see
-// browser.applescript.test.ts for tests that actually run osascript).
-//
-// These assert the fix structurally: a match sets didFocus and exits the
-// loop before any follow-up "bring to front" step runs, and that step is in
-// its own try, so it can no longer un-set a match that was already found.
+// A follow-up "bring the tab to front" step must never be able to undo a
+// match that was already found — if it throws, the tab should just stay
+// unfocused, not get treated as "not found" and duplicated. Asserted
+// structurally: didFocus is set and the loop exits before that step runs,
+// and the step is in its own try (see src/browser.ts).
 describe("match determination is decoupled from bringing the tab to front", () => {
   const url = "https://gitlab.example.com/g/p/-/merge_requests/1";
 
