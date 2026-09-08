@@ -7,7 +7,7 @@ import type { CommandResult } from "../src/exec";
 import type { GlabClient } from "../src/glab";
 import type { Workspace } from "../src/herdr";
 import { silentLogger, type Logger } from "../src/log";
-import { inspectWorkspace, refreshWorkspaces } from "../src/refresh";
+import { inspectWorkspace, refreshAll, refreshWorkspaces, shouldRetrySoon } from "../src/refresh";
 import { lastCheckMs } from "../src/throttle";
 
 // ---------- fakes ----------
@@ -146,10 +146,31 @@ describe("inspectWorkspace decisions", () => {
     expect((await inspectWorkspace(ws("w1", "/w"), cfg, glab)).kind).toBe("clear");
   });
 
-  test("other glab failure → clear (not abort)", async () => {
+  test("other glab failure (network/etc) → keep, not clear or abort", async () => {
     const glab = fakeGlab({ "/w": { branch: "b", mrs: { b: fail("x509: certificate signed by unknown authority") } } });
     const d = await inspectWorkspace(ws("w1", "/w"), cfg, glab);
-    expect(d).toMatchObject({ kind: "clear", reason: expect.stringContaining("x509") });
+    expect(d).toMatchObject({ kind: "keep", reason: expect.stringContaining("x509") });
+  });
+
+  test("timed-out glab call → keep", async () => {
+    const glab = fakeGlab({ "/w": { branch: "b", mrs: { b: fail("", { timedOut: true }) } } });
+    const d = await inspectWorkspace(ws("w1", "/w"), cfg, glab);
+    expect(d.kind).toBe("keep");
+  });
+
+  test("checkout on a non-GitLab remote (e.g. GitHub) → clear as no_mr, not abort", async () => {
+    const glab = fakeGlab({
+      "/w": {
+        branch: "b",
+        mrs: {
+          b: fail(
+            "None of the git remotes configured for this repository point to a known GitLab host. Please use `glab auth login` to tell glab which remote to use.",
+          ),
+        },
+      },
+    });
+    const d = await inspectWorkspace(ws("w1", "/w"), cfg, glab);
+    expect(d).toMatchObject({ kind: "clear", reason: expect.stringContaining("no merge request") });
   });
 
   test("unauthenticated glab → abort", async () => {
@@ -224,7 +245,7 @@ describe("refreshWorkspaces", () => {
     });
     const before = Date.now();
     const summary = await refreshWorkspaces([ws("wA", "/a"), ws("wB", "/b"), ws("wC", "/c")], cfg, silentLogger, glab);
-    expect(summary).toEqual({ reported: 1, cleared: 2, failed: 0, aborted: null, herdrUnavailable: false });
+    expect(summary).toEqual({ reported: 1, cleared: 2, kept: 0, failed: 0, aborted: null, herdrUnavailable: false });
 
     const calls = herdrCalls();
     expect(calls).toHaveLength(3);
@@ -263,7 +284,7 @@ describe("refreshWorkspaces", () => {
     ]);
   });
 
-  test("a throwing glab client for one workspace does not stop the others", async () => {
+  test("a throwing glab client for one workspace does not stop the others, and keeps its token", async () => {
     const glab = fakeGlab({ "/a": { branch: "a", mrs: { a: mr(1) } }, "/c": { branch: "c", mrs: { c: mr(3) } } });
     glab.currentBranch = async (cwd) => {
       if (cwd === "/b") throw new Error("kaboom");
@@ -272,9 +293,30 @@ describe("refreshWorkspaces", () => {
     const warnings: string[] = [];
     const log: Logger = { ...silentLogger, warn: (m) => warnings.push(m) };
     const summary = await refreshWorkspaces([ws("wA", "/a"), ws("wB", "/b"), ws("wC", "/c")], cfg, log, glab);
-    expect(summary).toMatchObject({ reported: 2, cleared: 1, aborted: null });
+    expect(summary).toMatchObject({ reported: 2, cleared: 0, kept: 1, aborted: null });
     expect(warnings.some((w) => w.includes("kaboom"))).toBe(true);
-    expect(herdrCalls().map((c) => c[2])).toEqual(["wA", "wB", "wC"]);
+    // wB's token is left untouched: no herdr call at all for it.
+    expect(herdrCalls().map((c) => c[2])).toEqual(["wA", "wC"]);
+  });
+
+  test("a transient glab failure keeps the token (no herdr call) and is counted as kept", async () => {
+    const glab = fakeGlab({
+      "/a": { branch: "a", mrs: { a: fail("dial tcp: lookup gitlab.example.com: no such host") } },
+      "/b": { branch: "b", mrs: { b: mr(3) } },
+    });
+    const summary = await refreshWorkspaces([ws("wA", "/a"), ws("wB", "/b")], cfg, silentLogger, glab);
+    expect(summary).toMatchObject({ reported: 1, cleared: 0, kept: 1, failed: 0, aborted: null });
+    // No herdr call at all for wA; its existing token and TTL are untouched.
+    expect(herdrCalls().map((c) => c[2])).toEqual(["wB"]);
+  });
+
+  test("unparsable MR JSON clears (not kept) and logs a warning", async () => {
+    const glab = fakeGlab({ "/a": { branch: "b", mrs: { b: ok("<html>not json</html>") } } });
+    const warnings: string[] = [];
+    const log: Logger = { ...silentLogger, warn: (m) => warnings.push(m) };
+    const summary = await refreshWorkspaces([ws("wA", "/a")], cfg, log, glab);
+    expect(summary).toMatchObject({ reported: 0, cleared: 1, kept: 0, aborted: null });
+    expect(warnings.some((w) => w.includes("unexpected output"))).toBe(true);
   });
 
   test("herdr rejecting a report counts as failed but the loop continues", async () => {
@@ -287,5 +329,47 @@ describe("refreshWorkspaces", () => {
     } finally {
       delete process.env.FAKE_HERDR_FAIL;
     }
+  });
+
+  test("refreshAll: herdr unreachable → herdrUnavailable, nothing refreshed", async () => {
+    process.env.FAKE_HERDR_FAIL = "1";
+    try {
+      const warnings: string[] = [];
+      const log: Logger = { ...silentLogger, warn: (m) => warnings.push(m) };
+      const summary = await refreshAll(cfg, log);
+      expect(summary).toEqual({ reported: 0, cleared: 0, kept: 0, failed: 0, aborted: null, herdrUnavailable: true });
+      expect(warnings.some((w) => w.includes("could not list workspaces"))).toBe(true);
+    } finally {
+      delete process.env.FAKE_HERDR_FAIL;
+    }
+  });
+});
+
+// ---------- shouldRetrySoon: the poller's fast-retry-after-a-bad-cycle decision ----------
+
+describe("shouldRetrySoon", () => {
+  const clean: Parameters<typeof shouldRetrySoon>[0] = {
+    reported: 3,
+    cleared: 1,
+    kept: 0,
+    failed: 0,
+    aborted: null,
+    herdrUnavailable: false,
+  };
+
+  test("false for a clean cycle (no keeps, herdr reachable)", () => {
+    expect(shouldRetrySoon(clean)).toBe(false);
+  });
+
+  test("true when any token was kept in place", () => {
+    expect(shouldRetrySoon({ ...clean, kept: 1 })).toBe(true);
+  });
+
+  test("true when herdr itself was unreachable, even with no keeps", () => {
+    expect(shouldRetrySoon({ ...clean, herdrUnavailable: true })).toBe(true);
+  });
+
+  test("a failed report/clear alone does not trigger a fast retry", () => {
+    expect(shouldRetrySoon({ ...clean, failed: 2 })).toBe(false);
   });
 });

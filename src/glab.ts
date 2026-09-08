@@ -4,13 +4,16 @@ import { runCommand, type CommandResult } from "./exec";
 import { normalizeBranch } from "./resolve";
 
 // How a failed glab call should be treated.
-//   no_mr   → the branch has no MR: clear the token, carry on
+//   no_mr   → the branch has no MR (or its remote isn't GitLab at all): clear
+//             the token, carry on
 //   auth    → glab cannot authenticate: log once, clear every token, stop
 //   missing → glab binary not found: same as auth
-//   other   → network/project/etc: clear this token, carry on
+//   other   → transient (network, timeout, unexpected glab error): keep the
+//             existing token in place, carry on
 export type GlabFailure = "no_mr" | "auth" | "missing" | "other";
 
-const NO_MR_PATTERN = /no open merge request|merge request not found|\b404\b/i;
+const NO_MR_PATTERN =
+  /no open merge request|merge request not found|\b404\b|none of the git remotes|not a known gitlab host/i;
 const AUTH_PATTERN =
   /\b401\b|unauthori[sz]ed|not (?:logged in|authenticated)|glab auth login|no token|invalid token|token (?:has )?expired|authentication required/i;
 
@@ -64,6 +67,11 @@ export interface GlabClient {
   ): Promise<CommandResult>;
 }
 
+// Without this, a dead network turns each `glab` call into glab's own ~42s
+// HTTP timeout, so a poll cycle over N workspaces can take N x 42s instead of
+// failing fast into a "keep" decision.
+const GLAB_CALL_TIMEOUT_MS = 20_000;
+
 export function createGlabClient(cfg: Config): GlabClient {
   const glab = resolveGlabPath(cfg);
   const git = Bun.which("git") ?? "git";
@@ -77,12 +85,12 @@ export function createGlabClient(cfg: Config): GlabClient {
       return normalizeBranch(result.stdout);
     },
     mrView(ref, cwd) {
-      return runCommand([glab, "mr", "view", ref, "--output", "json"], { cwd, env });
+      return runCommand([glab, "mr", "view", ref, "--output", "json"], { cwd, env, timeoutMs: GLAB_CALL_TIMEOUT_MS });
     },
     discussionsPage(projectId, iid, page, perPage, cwd) {
       const project = projectId === null ? ":id" : String(projectId);
       const endpoint = `projects/${project}/merge_requests/${iid}/discussions?per_page=${perPage}&page=${page}`;
-      return runCommand([glab, "api", endpoint], { cwd, env });
+      return runCommand([glab, "api", endpoint], { cwd, env, timeoutMs: GLAB_CALL_TIMEOUT_MS });
     },
   };
 }

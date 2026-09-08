@@ -30,7 +30,7 @@ async function main(): Promise<void> {
     clearStopRequest();
     ensurePoller(log);
     const summary = await refreshAll(cfg, log);
-    log.debug(`refresh: ${summary.reported} reported, ${summary.cleared} cleared, ${summary.failed} failed`);
+    log.debug(`refresh: ${summary.reported} reported, ${summary.cleared} cleared, ${summary.kept} kept, ${summary.failed} failed`);
     return;
   }
 
