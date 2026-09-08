@@ -69,11 +69,49 @@ describe("scriptInvocation", () => {
     const { script, args } = scriptInvocation("Arc", url);
     expect(args).toEqual([url]);
     expect(script).toContain('tell application "Arc"');
-    expect(script).toContain("tell t to select");
+    expect(script).toContain("tell matchedTab to select");
     // Regression guard: Arc can be running with 0 windows (all closed, app
     // still open); `front window` would error without this.
     expect(script).toContain("(count of windows) is 0");
     expect(script).toContain("normalizeUrl");
+  });
+});
+
+// A prior version set `didFocus to true` and did the "bring it to front"
+// work in the same `try` block as the URL comparison. An unverified property
+// access there (miniaturized of w — since removed) threw at runtime, was
+// swallowed by that same try, and skipped `didFocus`/`exit repeat` right
+// along with it — so the script always fell through to "opened" a new tab,
+// even on the second call for the exact same MR, despite `bun test` being
+// green throughout (every test here mocks execution; see
+// browser.applescript.test.ts for tests that actually run osascript).
+//
+// These assert the fix structurally: a match sets didFocus and exits the
+// loop before any follow-up "bring to front" step runs, and that step is in
+// its own try, so it can no longer un-set a match that was already found.
+describe("match determination is decoupled from bringing the tab to front", () => {
+  const url = "https://gitlab.example.com/g/p/-/merge_requests/1";
+
+  test("Chromium: didFocus is set, and the loop exits, before the follow-up activation step", () => {
+    const { script } = scriptInvocation("Google Chrome", url);
+    const matchIndex = script.indexOf("set didFocus to true");
+    const activateIndex = script.indexOf("set active tab index of matchedWindow");
+    expect(matchIndex).toBeGreaterThan(-1);
+    expect(activateIndex).toBeGreaterThan(-1);
+    expect(matchIndex).toBeLessThan(activateIndex);
+    // The activation step must be its own try, separate from the one
+    // guarding the URL comparison that sets didFocus.
+    expect(script.slice(activateIndex - 40, activateIndex)).toContain("try");
+  });
+
+  test("Arc: didFocus is set, and the loop exits, before selecting the matched tab", () => {
+    const { script } = scriptInvocation("Arc", url);
+    const matchIndex = script.indexOf("set didFocus to true");
+    const selectIndex = script.indexOf("tell matchedTab to select");
+    expect(matchIndex).toBeGreaterThan(-1);
+    expect(selectIndex).toBeGreaterThan(-1);
+    expect(matchIndex).toBeLessThan(selectIndex);
+    expect(script.slice(selectIndex - 40, selectIndex)).toContain("try");
   });
 });
 

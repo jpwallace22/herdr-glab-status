@@ -26,7 +26,9 @@ export function isSupportedBrowser(value: string): value is SupportedBrowser {
 // and a trailing "/" stripped. GitLab rewrites the tab's URL as you interact
 // with an MR (diff tabs, note anchors, etc.), so matching only the path
 // keeps a tab "found" across that instead of only the instant it was opened.
-const NORMALIZE_URL = `
+// Exported so tests/browser.applescript.test.ts can execute this handler for
+// real via osascript, instead of only checking the generated script's text.
+export const NORMALIZE_URL = `
 on normalizeUrl(u)
   set hashPos to offset of "#" in u
   if hashPos > 0 then set u to text 1 thru (hashPos - 1) of u
@@ -53,6 +55,8 @@ ${NORMALIZE_URL}
 on run argv
   set targetURL to my normalizeUrl(item 1 of argv)
   set didFocus to false
+  set matchedWindow to missing value
+  set matchedIndex to 0
   tell application "${app}"
     activate
     repeat with w in windows
@@ -61,17 +65,23 @@ on run argv
         set idx to idx + 1
         try
           if my normalizeUrl(URL of t) is targetURL then
-            set active tab index of w to idx
-            if miniaturized of w then set miniaturized of w to false
-            set index of w to 1
             set didFocus to true
+            set matchedWindow to w
+            set matchedIndex to idx
             exit repeat
           end if
         end try
       end repeat
       if didFocus then exit repeat
     end repeat
-    if not didFocus then
+    if didFocus then
+      -- Best-effort: bringing the matched tab/window to the front must not
+      -- undo the match itself if any of this fails for an unforeseen reason.
+      try
+        set active tab index of matchedWindow to matchedIndex
+        set index of matchedWindow to 1
+      end try
+    else
       if (count of windows) is 0 then
         make new window
       end if
@@ -92,21 +102,28 @@ ${NORMALIZE_URL}
 on run argv
   set targetURL to my normalizeUrl(item 1 of argv)
   set didFocus to false
+  set matchedTab to missing value
   tell application "Arc"
     activate
     repeat with w in windows
       repeat with t in tabs of w
         try
           if my normalizeUrl(URL of t) is targetURL then
-            tell t to select
             set didFocus to true
+            set matchedTab to t
             exit repeat
           end if
         end try
       end repeat
       if didFocus then exit repeat
     end repeat
-    if not didFocus then
+    if didFocus then
+      -- Best-effort: selecting the matched tab must not undo the match
+      -- itself if this fails for an unforeseen reason.
+      try
+        tell matchedTab to select
+      end try
+    else
       if (count of windows) is 0 then
         make new window
       end if
