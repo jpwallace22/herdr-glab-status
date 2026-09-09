@@ -85,8 +85,7 @@ type = "plugin_action"
 command = "glab-status.open-mr"
 description = "open GitLab MR"
 
-# pick one of your open MRs with fzf (see "Picking an MR" below for the caveat
-# about actions and terminals)
+# pick one of your open MRs with fzf (see "Picking an MR" below)
 [[keys.command]]
 key = "prefix+shift+p"
 type = "plugin_action"
@@ -130,12 +129,15 @@ cycle) is for — `pick-mr` intentionally never re-checks anything itself. It
 requires `fzf` on PATH (`brew install fzf`) and fails with a clear message
 if it's missing.
 
-It is also registered as the `pick-mr` action (`herdr plugin action invoke
-pick-mr --plugin glab-status`, or a keybinding as above), but fzf needs a real
-terminal — it reads the row list from stdin but drives its own UI straight
-over `/dev/tty` — and it's not verified that a herdr-invoked action has one.
-Running `bun bin/pick-mr.ts` directly in a pane is the invocation guaranteed
-to work.
+fzf needs a real terminal — it reads the row list from stdin but drives its
+own UI straight over `/dev/tty` — and a plugin action's own command doesn't
+get one. So the interactive picker runs as a herdr **plugin pane** instead
+(`[[panes]] id = "picker"` in `herdr-plugin.toml`, `placement = "overlay"`),
+which is a real pane like any other and does get a terminal; the `pick-mr`
+**action** (`herdr plugin action invoke pick-mr --plugin glab-status`, or the
+keybinding above) just opens/focuses that pane — the same pattern the
+`sessionizer` plugin already installed on this machine uses for its own fzf
+picker. `bun bin/pick-mr.ts` also still works run directly in any pane.
 
 ## How it stays fresh
 
@@ -266,11 +268,12 @@ herdr plugin log list --plugin glab-status
 herdr plugin unlink glab-status
 ```
 
-Layout: `herdr-plugin.toml` (manifest), `bin/` (hook and action entrypoints:
-`startup`, `update`, `poller`, `open-mr`, `pick-mr`, `stop`), `src/` (label
-formatting, branch → MR resolution, discussion paging, glab/herdr wrappers,
-refresh loop, poller control, macOS tab-reuse for `open-mr`, `pick-mr` row
-collection/sorting/formatting over cached `$mr` tokens), `tests/`.
+Layout: `herdr-plugin.toml` (manifest), `bin/` (hook, action, and plugin-pane
+entrypoints: `startup`, `update`, `poller`, `open-mr`, `open-pick-mr`,
+`pick-mr`, `stop`), `src/` (label formatting, branch → MR resolution,
+discussion paging, glab/herdr wrappers, refresh loop, poller control, macOS
+tab-reuse for `open-mr`, `pick-mr` row collection/sorting/formatting over
+cached `$mr` tokens), `tests/`.
 
 Why Bun/TypeScript: it matches the gh-pr reference plugin, needs no build step or
 dependencies (Bun runs `.ts` directly and ships a TOML parser), and gives the

@@ -9,9 +9,10 @@
 // --web` + notification fallback chain) -- and only for that one MR.
 //
 // fzf needs a real terminal: it reads the row list from stdin but drives its
-// own UI straight over /dev/tty, so this only works run from an actual pane
-// (`bun bin/pick-mr.ts`), not from something herdr invokes headlessly. See
-// README's "Picking an MR" section.
+// own UI straight over /dev/tty. This runs as the "picker" plugin pane
+// declared in herdr-plugin.toml (opened by bin/open-pick-mr.ts's `pick-mr`
+// action, or directly with `bun bin/pick-mr.ts` in any pane) rather than as
+// a plugin action's own command, which has no real terminal to give it.
 
 import { focusOrOpenTab } from "../src/browser";
 import { loadConfig } from "../src/config";
