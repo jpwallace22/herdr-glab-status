@@ -118,11 +118,13 @@ export function formatRows(rows: BoardRow[], now: number = Date.now()): Formatte
 }
 
 // The right-hand preview for whichever row is highlighted: the *workspace*
-// -- where it lives and its live herdr state (agent, panes/tabs, focus) --
-// not a restatement of the row's own MR columns, which are already on
-// screen. `status` is null when `herdr workspace get` failed or the caller
-// skipped it; every workspace-state line then reads "?" rather than being
-// omitted, so the layout doesn't jump around row to row.
+// only -- where it lives and its live herdr state (agent, panes/tabs,
+// focus). No MR content at all: the row you're looking at already tells
+// you which MR this is (REPO/MR/TITLE columns), so this pane is purely
+// "what and where is this workspace". `status` is null when `herdr
+// workspace get` failed or the caller skipped it; every workspace-state
+// line then reads "?" rather than being omitted, so the layout doesn't
+// jump around row to row.
 export function formatPreview(row: BoardRow, status: WorkspaceStatus | null): string {
   return [
     `${row.repo}  (workspace ${row.workspaceId})`,
@@ -132,7 +134,5 @@ export function formatPreview(row: BoardRow, status: WorkspaceStatus | null): st
     `agent      ${status?.agentStatus ?? "?"}`,
     `panes      ${status ? status.paneCount : "?"}   tabs   ${status ? status.tabCount : "?"}`,
     `focused    ${status ? (status.focused ? "yes" : "no") : "?"}`,
-    "",
-    `!${row.iid}  ${row.title}`,
   ].join("\n");
 }

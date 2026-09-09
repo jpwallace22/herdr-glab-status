@@ -139,7 +139,7 @@ describe("formatRows", () => {
 describe("formatPreview", () => {
   const status: WorkspaceStatus = { agentStatus: "working", paneCount: 2, tabCount: 1, focused: true };
 
-  test("leads with workspace identity and live herdr state, MR reduced to a reference line", () => {
+  test("is workspace-only: identity + live herdr state, no MR content at all", () => {
     const text = formatPreview(
       row({
         workspaceId: "wD",
@@ -159,9 +159,10 @@ describe("formatPreview", () => {
     expect(text).toContain("agent      working");
     expect(text).toContain("panes      2   tabs   1");
     expect(text).toContain("focused    yes");
-    expect(text).toContain("!13  feat!: rebuild on the kubb-api-* stack");
-    // The row's own CI/APPR/THR/CMT/AGE aren't repeated here -- they're
-    // already on screen in the table.
+    // Nothing MR-specific: the row you highlighted to get here already
+    // shows the MR number, title, CI, approvals, threads, comments, age.
+    expect(text).not.toContain("!13");
+    expect(text).not.toContain("rebuild on the kubb-api");
     expect(text).not.toContain("approvals");
     expect(text).not.toContain("comments");
   });
