@@ -125,7 +125,7 @@ REPO          MR    CI        APPR  THR  CMT  AGE  TITLE
 catalog-ui    !581  ✖ failed  1/3   1    4    22m  feat: update catalog to use a11y-toolkit
 landing-ui    !622  ✔ success 2/3   -    53   3d   chore(e2e): add the service-operations-bot daily triage schedule
 
-[enter]: workspace   [o]: browser   [r]: refresh   [d]: drafts   [m]: mine   [s]: scope   [esc]: quit
+[enter]: workspace   [ctrl-o]: browser   [ctrl-r]: refresh   [ctrl-d]: drafts   [alt-m]: mine   [ctrl-s]: scope   [esc]: quit
 ```
 
 Keys, once the list is up:
@@ -133,18 +133,23 @@ Keys, once the list is up:
 | Key | Action |
 | --- | --- |
 | `enter` | Jump to that MR's workspace (`herdr workspace focus`) |
-| `o` | Open that MR in the browser instead, reusing `open-mr`'s tab-reuse and notification fallback |
-| `r` | Refresh the cached data (a live glab pass, same as the `refresh` action) |
-| `d` | Toggle showing draft MRs |
-| `m` | Toggle showing only MRs you authored |
-| `s` | Toggle scoping to the repo of the workspace you opened the picker from |
+| `ctrl-o` | Open that MR in the browser instead, reusing `open-mr`'s tab-reuse and notification fallback |
+| `ctrl-r` | Refresh the cached data (a live glab pass, same as the `refresh` action) |
+| `ctrl-d` | Toggle showing draft MRs |
+| `alt-m` | Toggle showing only MRs you authored |
+| `ctrl-s` | Toggle scoping to the repo of the workspace you opened the picker from |
 | any other text | Fuzzy-filters the list, as usual for fzf |
 
-`d`/`m`/`s`/`r` all replace the list in place via fzf's own `reload`
-binding (`bin/board-rows.ts`) — none of them close the picker. Filter state
-persists across picker runs (`<state dir>/mr-board-filters.json`) until you
-toggle it back. It requires `fzf` on PATH (`brew install fzf`) and fails
-with a clear message if it's missing.
+Everything but `enter` is `ctrl-`-prefixed (or `alt-m` for mine — `ctrl-m`
+is the same byte terminals send for Enter, so it can't be bound
+separately) so plain letters go to the search box instead of triggering an
+action — you can type "docker" without `d` toggling drafts partway through.
+
+`ctrl-d`/`alt-m`/`ctrl-s`/`ctrl-r` all replace the list in place via fzf's
+own `reload` binding (`bin/board-rows.ts`) — none of them close the picker.
+Filter state persists across picker runs (`<state dir>/mr-board-filters.json`)
+until you toggle it back. It requires `fzf` on PATH (`brew install fzf`) and
+fails with a clear message if it's missing.
 
 The right-hand preview pane shows the **workspace** the highlighted row
 lives in, not a restatement of the row itself: a small identity block

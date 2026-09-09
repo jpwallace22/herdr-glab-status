@@ -4,12 +4,16 @@
 // the background poller, or an explicit refresh) -- no glab/network call
 // at all to build the initial list, so it's instant.
 //
-// Enter jumps to that MR's workspace (`herdr workspace focus`); o opens it
-// in the browser instead, reusing open-mr.ts's tab-reuse + `glab mr view
-// --web` + notification fallback chain; r refreshes the cached data; d/m/s
-// toggle drafts/mine/scope filters (bin/board-rows.ts does the actual
-// toggling + re-read + re-format for all of r/d/m/s, via fzf's own
-// `reload` binding, so none of them need to leave the picker). The key
+// Enter jumps to that MR's workspace (`herdr workspace focus`); ctrl-o opens
+// it in the browser instead, reusing open-mr.ts's tab-reuse + `glab mr view
+// --web` + notification fallback chain; ctrl-r refreshes the cached data;
+// ctrl-d/alt-m/ctrl-s toggle drafts/mine/scope filters (bin/board-rows.ts
+// does the actual toggling + re-read + re-format for all of them, via
+// fzf's own `reload` binding, so none of them need to leave the picker).
+// Everything but enter is ctrl- (or alt-, for mine -- see below) prefixed
+// on purpose: plain letters go to the fuzzy search box, so typing to
+// filter (e.g. "docker") never gets hijacked by a bare 'd'/'o'/etc
+// keybinding. The key
 // legend is a `--footer` (needs fzf 0.63+), pinned to the bottom, separate
 // from the column header. Layout is top-down (`--layout reverse`); the
 // right-hand preview pane shows the *workspace* the highlighted row lives
@@ -63,15 +67,18 @@ async function pick(header: string, lines: string[]): Promise<string | null> {
         "--prompt",
         "MR> ",
         "--expect",
-        "enter,o",
+        "enter,ctrl-o",
         "--bind",
-        `r:reload(${BOARD_ROWS} --refresh)`,
+        `ctrl-r:reload(${BOARD_ROWS} --refresh)`,
         "--bind",
-        `d:reload(${BOARD_ROWS} --toggle-drafts)`,
+        `ctrl-d:reload(${BOARD_ROWS} --toggle-drafts)`,
+        // Not ctrl-m: that's carriage return, the same byte terminals send
+        // for Enter -- fzf (and terminals generally) can't reliably tell
+        // them apart. alt-m avoids the collision.
         "--bind",
-        `m:reload(${BOARD_ROWS} --toggle-mine)`,
+        `alt-m:reload(${BOARD_ROWS} --toggle-mine)`,
         "--bind",
-        `s:reload(${BOARD_ROWS} --toggle-scope)`,
+        `ctrl-s:reload(${BOARD_ROWS} --toggle-scope)`,
         // Right-hand pane: which workspace the highlighted row lives in,
         // plus that workspace's live agent pane content. `follow` scrolls
         // to the bottom of the scrollback (the current/most recent state)
@@ -133,7 +140,7 @@ async function main(): Promise<void> {
 
   const rows = sortRows(applyFilters(cached, readFilters(), readCachedUsername()));
   if (rows.length === 0) {
-    console.error("[glab-status] no open MRs match the current filters (press d/m/s to toggle them)");
+    console.error("[glab-status] no open MRs match the current filters (press ctrl-d/alt-m/ctrl-s to toggle them)");
     return;
   }
 
@@ -146,7 +153,7 @@ async function main(): Promise<void> {
   const row = rows[index];
   if (!row) return;
 
-  if (key === "o") {
+  if (key === "ctrl-o") {
     await openInBrowser(row);
     return;
   }

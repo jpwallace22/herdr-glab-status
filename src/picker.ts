@@ -100,7 +100,8 @@ const COLUMN_TITLES = ["REPO", "MR", "CI", "APPR", "THR", "CMT", "AGE"] as const
 
 // Printed via `--footer` (fzf 0.63+; see bin/pick-mr.ts), pinned to the
 // bottom of the pane rather than mixed into the column header.
-export const KEY_LEGEND = "[enter]: workspace   [o]: browser   [r]: refresh   [d]: drafts   [m]: mine   [s]: scope   [esc]: quit";
+export const KEY_LEGEND =
+  "[enter]: workspace   [ctrl-o]: browser   [ctrl-r]: refresh   [ctrl-d]: drafts   [alt-m]: mine   [ctrl-s]: scope   [esc]: quit";
 
 // Fixed-width columns sized to the widest cell (or the header, if that's
 // wider); TITLE left ragged since it's last and terminals/fzf wrap it anyway.
