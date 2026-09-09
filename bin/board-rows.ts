@@ -14,6 +14,14 @@
 // of this whole picker that isn't purely reading a cache, because that
 // state is inherently live, not something a poller cycle could usefully
 // snapshot. None of it touches glab.
+//
+// Filter state (s/d/m) lives in a file whose path bin/pick-mr.ts generates
+// fresh per picker session and passes down via GLAB_STATUS_FILTERS_PATH
+// (inherited by every reload/preview command fzf spawns, since they're
+// children of the same process) -- deliberately not a fixed, permanently
+// shared path: filters reset every time you open the picker, they don't
+// persist across sessions. Falls back to src/board-filters.ts's own
+// default path when unset, for standalone `bun bin/board-rows.ts` use.
 
 import { toggleDrafts, toggleMine, toggleScope, readFilters } from "../src/board-filters";
 import { readBoardCache, readCachedUsername, refreshBoard } from "../src/board";
@@ -30,6 +38,11 @@ const log = hookLogger(cfg.debug);
 // Generous scrollback: the preview pane is usually the full height of a
 // large overlay, and this is just a local read, not a network call.
 const PREVIEW_SCROLLBACK_LINES = 300;
+
+// undefined (not set) falls back to src/board-filters.ts's own shared
+// default path -- only reachable via standalone use, not through the
+// picker (bin/pick-mr.ts always sets this).
+const filtersPath = process.env.GLAB_STATUS_FILTERS_PATH || undefined;
 
 // The repo of the workspace this pane belongs to, for "scope" -- plugin
 // panes get HERDR_WORKSPACE_ID the same as actions do.
@@ -49,7 +62,7 @@ async function main(): Promise<void> {
   const previewFlagIndex = argv.indexOf("--preview");
   if (previewFlagIndex >= 0) {
     const index = Number(argv[previewFlagIndex + 1]);
-    const filters = readFilters();
+    const filters = readFilters(filtersPath);
     const rows = sortRows(applyFilters(readBoardCache(), filters, readCachedUsername()));
     const row = rows[index];
     if (!row) {
@@ -73,9 +86,9 @@ async function main(): Promise<void> {
     return;
   }
 
-  if (args.has("--toggle-drafts")) toggleDrafts();
-  if (args.has("--toggle-mine")) toggleMine();
-  if (args.has("--toggle-scope")) toggleScope(await currentRepoName());
+  if (args.has("--toggle-drafts")) toggleDrafts(filtersPath);
+  if (args.has("--toggle-mine")) toggleMine(filtersPath);
+  if (args.has("--toggle-scope")) toggleScope(await currentRepoName(), filtersPath);
 
   let rows;
   if (args.has("--refresh")) {
@@ -90,7 +103,7 @@ async function main(): Promise<void> {
     rows = readBoardCache();
   }
 
-  const filters = readFilters();
+  const filters = readFilters(filtersPath);
   const username = readCachedUsername();
   const filtered = sortRows(applyFilters(rows, filters, username));
   const { lines } = formatRows(filtered);

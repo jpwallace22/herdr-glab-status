@@ -20,18 +20,27 @@
 // in -- its live herdr state (agent/panes/tabs/focus), not a restatement of
 // the row's own MR columns -- via bin/board-rows.ts --preview.
 //
+// Filter state is per-session, not persisted: a filters file unique to
+// this process (SESSION_FILTERS_PATH), deleted on exit, so closing the
+// picker and opening it again always starts from the defaults (all open
+// MRs, no scope) rather than remembering whatever you last toggled. The
+// path is exported as GLAB_STATUS_FILTERS_PATH, which every reload/preview
+// command below inherits (they're children of this process via fzf).
+//
 // This runs as the "picker" plugin pane declared in herdr-plugin.toml
 // (opened by bin/open-pick-mr.ts's `pick-mr` action, or directly with
 // `bun bin/pick-mr.ts` in any pane) rather than as a plugin action's own
 // command, because fzf needs a real terminal and an action's command
 // doesn't get one.
 
+import { unlinkSync } from "node:fs";
+import { join } from "node:path";
 import type { BoardRow } from "../src/board";
 import { readBoardCache, readCachedUsername } from "../src/board";
 import { readFilters } from "../src/board-filters";
 import { focusOrOpenTab } from "../src/browser";
 import { loadConfig } from "../src/config";
-import { configDir, pluginRoot } from "../src/env";
+import { configDir, pluginRoot, stateDir } from "../src/env";
 import { runCommand } from "../src/exec";
 import { briefError, resolveGlabPath } from "../src/glab";
 import { runHerdr, showNotification } from "../src/herdr";
@@ -42,6 +51,17 @@ const cfg = loadConfig(configDir(), (m) => console.error(`[glab-status] config: 
 const log = hookLogger(cfg.debug);
 
 const BOARD_ROWS = ["bun", `${pluginRoot()}/bin/board-rows.ts`].join(" ");
+
+// Unique per invocation (pid), never reused, deleted below on exit.
+const SESSION_FILTERS_PATH = join(stateDir(), `mr-board-filters-${process.pid}.json`);
+process.env.GLAB_STATUS_FILTERS_PATH = SESSION_FILTERS_PATH;
+process.on("exit", () => {
+  try {
+    unlinkSync(SESSION_FILTERS_PATH);
+  } catch {
+    // never created (no toggle pressed this session) or already gone
+  }
+});
 
 // Feed `lines` to fzf on stdin and return its raw stdout (the `--expect`ed
 // key on the first line, the selected row on the second), or null if
@@ -138,7 +158,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  const rows = sortRows(applyFilters(cached, readFilters(), readCachedUsername()));
+  const rows = sortRows(applyFilters(cached, readFilters(SESSION_FILTERS_PATH), readCachedUsername()));
   if (rows.length === 0) {
     console.error("[glab-status] no open MRs match the current filters (press ctrl-d/alt-m/ctrl-s to toggle them)");
     return;

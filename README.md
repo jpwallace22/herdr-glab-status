@@ -147,8 +147,10 @@ action — you can type "docker" without `d` toggling drafts partway through.
 
 `ctrl-d`/`alt-m`/`ctrl-s`/`ctrl-r` all replace the list in place via fzf's
 own `reload` binding (`bin/board-rows.ts`) — none of them close the picker.
-Filter state persists across picker runs (`<state dir>/mr-board-filters.json`)
-until you toggle it back. It requires `fzf` on PATH (`brew install fzf`) and
+Filter state is per-session, not persisted: closing the picker and opening
+it again always starts from the defaults (all open MRs, no scope), never
+remembering a filter you toggled last time. It requires `fzf` on PATH
+(`brew install fzf`) and
 fails with a clear message if it's missing.
 
 The right-hand preview pane shows the **workspace** the highlighted row
