@@ -8,6 +8,16 @@
 // logic. It adds exactly one extra glab call per open MR (approvals) beyond
 // what the sidebar refresh already makes — worth it for a one-shot
 // interactive picker, not for the background poll cycle.
+//
+// Unlike refresh.ts's refreshWorkspaces (deliberately sequential: it runs
+// every ~5 minutes forever in the background, so gentleness matters more
+// than latency), collectRows runs every workspace concurrently. This is a
+// one-shot interactive command a person is sitting at a keybinding waiting
+// on, and each workspace's own pipeline (branch check, mr view, discussion
+// pages, an approvals call) already carries 15-20s glab-call timeouts — done
+// sequentially across a dozen workspaces that's a minute or more of nothing
+// on screen before fzf ever appears. Concurrently, the wait is bounded by
+// the single slowest workspace instead of their sum.
 
 import type { Approvals } from "./approvals";
 import { parseApprovals } from "./approvals";
@@ -41,11 +51,10 @@ export interface CollectResult {
   aborted: boolean;
 }
 
-// Called after each workspace is inspected, so a caller (bin/pick-mr.ts) can
-// show progress: this walk is sequential and network-bound (a git branch
-// check, an mr view, discussion pages, an approvals call — several of which
-// carry a 15-20s timeout), so collecting rows across a handful of workspaces
-// can take the better part of a minute with nothing else to show for it.
+// Called as each workspace finishes, so a caller (bin/pick-mr.ts) can show
+// progress. `index` is a count of workspaces completed so far, not the
+// workspace's position in the input list — workspaces run concurrently, so
+// they don't finish in input order.
 export type ProgressCallback = (workspace: Workspace, index: number, total: number) => void;
 
 // Fetch approvals for one MR. Best-effort: any failure (including a
@@ -58,40 +67,28 @@ async function fetchApprovals(glab: GlabClient, projectId: number | null, iid: n
   return parseApprovals(result.stdout);
 }
 
-// Walk every workspace, reusing inspectWorkspace's decision for each one.
-// Only "report" decisions for opened (not merged/closed) MRs become rows;
-// workspaces with no MR, a kept (transient) token, or a merged/closed MR are
-// silently skipped, same as they'd be blank in the sidebar. An abort (glab
-// missing or unauthenticated) stops the walk early and is reported to the
-// caller instead of throwing, mirroring refreshWorkspaces.
-export async function collectRows(
-  workspaces: Workspace[],
+// Inspect one workspace end to end (decision + approvals if it turns into a
+// report row), for collectRows to fan out over every workspace at once.
+async function collectOne(
+  ws: Workspace,
   cfg: Config,
   log: Logger,
   glab: GlabClient,
-  onProgress?: ProgressCallback,
-): Promise<CollectResult> {
-  const rows: MrRow[] = [];
-  for (let i = 0; i < workspaces.length; i++) {
-    const ws = workspaces[i]!;
-    let decision: Awaited<ReturnType<typeof inspectWorkspace>>;
-    try {
-      decision = await inspectWorkspace(ws, cfg, glab);
-    } catch (err) {
-      log.warn(`${ws.label}: ${err instanceof Error ? err.message : String(err)}`);
-      onProgress?.(ws, i + 1, workspaces.length);
-      continue;
-    }
-    onProgress?.(ws, i + 1, workspaces.length);
-    if (decision.kind === "abort") {
-      log.error(decision.message);
-      return { rows, aborted: true };
-    }
-    if (decision.kind !== "report" || decision.mr.state !== "opened") continue;
+): Promise<{ row: MrRow | null; aborted: string | null }> {
+  let decision: Awaited<ReturnType<typeof inspectWorkspace>>;
+  try {
+    decision = await inspectWorkspace(ws, cfg, glab);
+  } catch (err) {
+    log.warn(`${ws.label}: ${err instanceof Error ? err.message : String(err)}`);
+    return { row: null, aborted: null };
+  }
+  if (decision.kind === "abort") return { row: null, aborted: decision.message };
+  if (decision.kind !== "report" || decision.mr.state !== "opened") return { row: null, aborted: null };
 
-    const { mr, unresolved } = decision;
-    const approvals = await fetchApprovals(glab, mr.projectId, mr.iid, ws.checkoutPath);
-    rows.push({
+  const { mr, unresolved } = decision;
+  const approvals = await fetchApprovals(glab, mr.projectId, mr.iid, ws.checkoutPath);
+  return {
+    row: {
       workspace: ws,
       repo: ws.label,
       iid: mr.iid,
@@ -102,9 +99,50 @@ export async function collectRows(
       comments: mr.commentCount,
       approvals,
       webUrl: mr.webUrl,
-    });
-  }
-  return { rows, aborted: false };
+    },
+    aborted: null,
+  };
+}
+
+// Inspect every workspace concurrently, reusing inspectWorkspace's decision
+// for each one. Only "report" decisions for opened (not merged/closed) MRs
+// become rows; workspaces with no MR, a kept (transient) token, or a
+// merged/closed MR are silently skipped, same as they'd be blank in the
+// sidebar. Rows come back in the same order as `workspaces`, regardless of
+// which finished first. An abort (glab missing or unauthenticated) is
+// reported to the caller instead of throwing, mirroring refreshWorkspaces —
+// but unlike refreshWorkspaces it does not stop other workspaces early:
+// they're already in flight by the time any one of them aborts, and a
+// workspace's own successful result shouldn't be thrown away just because a
+// different one hit an auth error.
+export async function collectRows(
+  workspaces: Workspace[],
+  cfg: Config,
+  log: Logger,
+  glab: GlabClient,
+  onProgress?: ProgressCallback,
+): Promise<CollectResult> {
+  let aborted = false;
+  let completed = 0;
+  const total = workspaces.length;
+
+  const results = await Promise.all(
+    workspaces.map(async (ws) => {
+      const result = await collectOne(ws, cfg, log, glab);
+      completed++;
+      onProgress?.(ws, completed, total);
+      if (result.aborted) {
+        // Only the first abort is logged: with everything running
+        // concurrently, several workspaces can hit "glab is unusable" at
+        // once, and it's the same underlying problem each time.
+        if (!aborted) log.error(result.aborted);
+        aborted = true;
+      }
+      return result.row;
+    }),
+  );
+
+  return { rows: results.filter((row): row is MrRow => row !== null), aborted };
 }
 
 // Higher = needs attention sooner. A failed pipeline outweighs everything

@@ -90,7 +90,7 @@ describe("collectRows", () => {
     });
   });
 
-  test("onProgress fires once per workspace, in order, even across a throw and an abort", async () => {
+  test("onProgress fires exactly once per workspace (order not guaranteed: workspaces run concurrently)", async () => {
     const glab = fakeGlab({
       "/a": { branch: "b", mrs: { b: mr(1) } },
       "/c": { branch: "d", mrs: { d: UNAUTHORIZED } },
@@ -99,11 +99,15 @@ describe("collectRows", () => {
       if (cwd === "/z") throw new Error("kaboom");
       return { "/a": "b", "/c": "d" }[cwd] ?? null;
     };
-    const calls: string[] = [];
-    await collectRows([ws("wA", "/a"), ws("wZ", "/z"), ws("wC", "/c")], cfg, silentLogger, glab, (workspace, i, total) =>
-      calls.push(`${i}/${total} ${workspace.label}`),
-    );
-    expect(calls).toEqual(["1/3 wA", "2/3 wZ", "3/3 wC"]);
+    const seenLabels: string[] = [];
+    const seenIndices: number[] = [];
+    await collectRows([ws("wA", "/a"), ws("wZ", "/z"), ws("wC", "/c")], cfg, silentLogger, glab, (workspace, i, total) => {
+      seenLabels.push(workspace.label);
+      seenIndices.push(i);
+      expect(total).toBe(3);
+    });
+    expect(seenLabels.sort()).toEqual(["wA", "wC", "wZ"]);
+    expect(seenIndices.sort((a, b) => a - b)).toEqual([1, 2, 3]);
   });
 
   test("skips merged/closed MRs", async () => {
@@ -122,7 +126,7 @@ describe("collectRows", () => {
     expect(rows.map((r) => r.iid)).toEqual([2]);
   });
 
-  test("an abort (auth failure) stops the walk and is reported, not thrown", async () => {
+  test("an abort (auth failure) is reported once, not thrown, without discarding other workspaces' rows", async () => {
     const glab = fakeGlab({
       "/a": { branch: "b", mrs: { b: mr(1) } },
       "/b": { branch: "c", mrs: { c: UNAUTHORIZED } },
@@ -132,9 +136,11 @@ describe("collectRows", () => {
     const log: Logger = { ...silentLogger, error: (m) => errors.push(m) };
     const { rows, aborted } = await collectRows([ws("wA", "/a"), ws("wB", "/b"), ws("wC", "/c")], cfg, log, glab);
     expect(aborted).toBe(true);
-    expect(rows.map((r) => r.iid)).toEqual([1]);
+    // wA and wC's own calls succeeded independently of wB's auth failure —
+    // everything runs concurrently, so there's nothing to gain (and a
+    // successful result to lose) by discarding them.
+    expect(rows.map((r) => r.iid)).toEqual([1, 3]);
     expect(errors).toHaveLength(1);
-    expect(glab.calls.some((c) => c.includes("@/c"))).toBe(false);
   });
 
   test("a missing approvals method or a failed approvals call yields null, not a dropped row", async () => {
