@@ -209,6 +209,15 @@ answering, when the `stop-poller` action is invoked, or when a newer poller has
 replaced it (after a live server handoff). A stop marker keeps event hooks from
 restarting it; the next server start or a manual `refresh` clears the marker.
 
+Bun loads a poller's modules once at process start and never hot-reloads them,
+so a `git pull` in the linked checkout or a `herdr plugin link` to a different
+one has no effect on an already-running poller — it keeps executing whatever
+`src/*.ts` and `bin/*.ts` looked like when it started. Every trigger in the
+table above that calls `ensurePoller()` compares the running poller's record
+against the newest mtime across the plugin's own `src/*.ts` and `bin/*.ts`
+files; a mismatch means the process predates the code now on disk, so it is
+restarted the same way a poller bound to a stale socket is.
+
 ### Unresolved count
 
 `✎N` counts unresolved **discussion threads** (a discussion with at least one
@@ -303,6 +312,16 @@ current one — that's outside what AppleScript alone can do reliably.
   `glab mr view <branch> --output json` works inside the checkout, and that
   `herdr workspace list` reports a `worktree.checkout_path` for the workspace.
   Workspaces without a checkout are skipped.
+- A fix landed on disk (a `git pull`, a `herdr plugin link` to a different
+  checkout) but the behavior didn't change: this used to require killing the
+  poller by hand, since Bun never hot-reloads a running process's modules. It
+  no longer does — the next event, action, or startup that calls
+  `ensurePoller()` notices the running poller's code predates what's on disk
+  now and restarts it automatically. If you still suspect a stale process
+  (e.g. after manually sending it a signal that bypassed the state record),
+  `poller.log` in the plugin state directory logs `poller pid <pid> predates
+  the code on disk; restarting` when this fires; `herdr plugin action invoke
+  refresh --plugin glab-status` forces the check immediately.
 
 ## Development
 

@@ -11,9 +11,10 @@
 import { existsSync } from "node:fs";
 import { refreshTokensAndBoard } from "../src/board";
 import { loadConfig } from "../src/config";
-import { configDir, herdrSocketPath, stateDir } from "../src/env";
+import { configDir, herdrSocketPath, pluginRoot, stateDir } from "../src/env";
 import { fileLogger } from "../src/log";
 import {
+  computeSourceVersion,
   isAlive,
   pollerLogPath,
   readRecord,
@@ -70,7 +71,13 @@ async function main(): Promise<void> {
   }
 
   let cfg = loadConfig(configDir(), (m) => log.warn(m));
-  writeRecord({ pid: process.pid, socketPath: herdrSocketPath(), startedUnixMs: Date.now(), intervalMs: cfg.pollIntervalMs });
+  writeRecord({
+    pid: process.pid,
+    socketPath: herdrSocketPath(),
+    startedUnixMs: Date.now(),
+    intervalMs: cfg.pollIntervalMs,
+    sourceVersion: computeSourceVersion(pluginRoot()),
+  });
   log.info(
     `poller started (pid ${process.pid}, every ${cfg.pollIntervalMs / 1000}s, state: ${stateDir()}, socket: ${herdrSocketPath() ?? "default"})`,
   );
