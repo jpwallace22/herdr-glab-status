@@ -92,6 +92,41 @@ export async function getWorkspace(workspaceId: string): Promise<Workspace | nul
   }
 }
 
+// Live herdr state for one workspace -- distinct from Workspace, which is
+// the plugin's own narrow, cache-friendly view. Only used by the pick-mr
+// board's preview pane (src/picker.ts's formatPreview), fetched fresh each
+// time (a local socket call, not glab/network, so it's cheap to not cache).
+export interface WorkspaceStatus {
+  agentStatus: string;
+  paneCount: number;
+  tabCount: number;
+  focused: boolean;
+}
+
+export function parseWorkspaceStatus(payload: unknown): WorkspaceStatus | null {
+  if (payload === null || typeof payload !== "object") return null;
+  const result = (payload as { result?: unknown }).result;
+  const container = result && typeof result === "object" ? (result as Record<string, unknown>) : (payload as Record<string, unknown>);
+  const ws = (container.workspace && typeof container.workspace === "object" ? container.workspace : container) as Record<string, unknown>;
+  if (typeof ws.workspace_id !== "string") return null;
+  return {
+    agentStatus: typeof ws.agent_status === "string" ? ws.agent_status : "unknown",
+    paneCount: typeof ws.pane_count === "number" ? ws.pane_count : 0,
+    tabCount: typeof ws.tab_count === "number" ? ws.tab_count : 0,
+    focused: ws.focused === true,
+  };
+}
+
+export async function getWorkspaceStatus(workspaceId: string): Promise<WorkspaceStatus | null> {
+  const result = await runHerdr(["workspace", "get", workspaceId]);
+  if (!result.ok) return null;
+  try {
+    return parseWorkspaceStatus(JSON.parse(result.stdout));
+  } catch {
+    return null;
+  }
+}
+
 export function reportToken(workspaceId: string, label: string, ttlMs: number, seq: number): Promise<CommandResult> {
   return runHerdr([
     "workspace",

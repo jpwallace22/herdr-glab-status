@@ -6,17 +6,23 @@
 // picker's initial list and, via fzf's `--bind key:reload(...)`, to
 // refresh or re-filter it without leaving the picker -- see bin/pick-mr.ts.
 //
-// Flags (any combination): --refresh, --toggle-drafts, --toggle-mine,
-// --toggle-scope.
+// Flags: --refresh, --toggle-drafts, --toggle-mine, --toggle-scope (any
+// combination), or --preview <index> on its own (fzf's right-hand preview
+// for the row currently highlighted -- see bin/pick-mr.ts's `--preview`
+// binding). --preview does one live `herdr workspace get` call (a local
+// socket call, not glab) for the highlighted row's current agent/pane/tab
+// state -- the one part of this whole picker that isn't purely reading a
+// cache, because that state is inherently live, not something a poller
+// cycle could usefully snapshot.
 
 import { toggleDrafts, toggleMine, toggleScope, readFilters } from "../src/board-filters";
 import { readBoardCache, readCachedUsername, refreshBoard } from "../src/board";
 import { loadConfig } from "../src/config";
 import { configDir } from "../src/env";
 import { createGlabClient } from "../src/glab";
-import { getWorkspace, listWorkspaces } from "../src/herdr";
+import { getWorkspace, getWorkspaceStatus, listWorkspaces } from "../src/herdr";
 import { hookLogger } from "../src/log";
-import { applyFilters, formatRows, sortRows } from "../src/picker";
+import { applyFilters, formatPreview, formatRows, sortRows } from "../src/picker";
 
 const cfg = loadConfig(configDir(), (m) => console.error(`[glab-status] config: ${m}`));
 const log = hookLogger(cfg.debug);
@@ -31,7 +37,24 @@ async function currentRepoName(): Promise<string | null> {
 }
 
 async function main(): Promise<void> {
-  const args = new Set(process.argv.slice(2));
+  const argv = process.argv.slice(2);
+  const args = new Set(argv);
+
+  // Preview is read-only and never combined with the toggle/refresh flags
+  // (fzf calls it on every highlight change, independent of a reload).
+  const previewFlagIndex = argv.indexOf("--preview");
+  if (previewFlagIndex >= 0) {
+    const index = Number(argv[previewFlagIndex + 1]);
+    const filters = readFilters();
+    const rows = sortRows(applyFilters(readBoardCache(), filters, readCachedUsername()));
+    const row = rows[index];
+    if (!row) {
+      console.log("(no row selected)");
+      return;
+    }
+    console.log(formatPreview(row, await getWorkspaceStatus(row.workspaceId)));
+    return;
+  }
 
   if (args.has("--toggle-drafts")) toggleDrafts();
   if (args.has("--toggle-mine")) toggleMine();

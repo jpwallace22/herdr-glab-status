@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { DEFAULT_FILTERS } from "../src/board-filters";
 import type { BoardRow } from "../src/board";
-import { applyFilters, attentionScore, formatRows, sortRows } from "../src/picker";
+import type { WorkspaceStatus } from "../src/herdr";
+import { applyFilters, attentionScore, formatPreview, formatRows, sortRows } from "../src/picker";
 
 function row(overrides: Partial<BoardRow> = {}): BoardRow {
   return {
@@ -132,5 +133,43 @@ describe("formatRows", () => {
     const { header, lines } = formatRows([], now);
     expect(header).toContain("REPO");
     expect(lines).toEqual([]);
+  });
+});
+
+describe("formatPreview", () => {
+  const status: WorkspaceStatus = { agentStatus: "working", paneCount: 2, tabCount: 1, focused: true };
+
+  test("leads with workspace identity and live herdr state, MR reduced to a reference line", () => {
+    const text = formatPreview(
+      row({
+        workspaceId: "wD",
+        checkoutPath: "/Users/me/code/ngc-auth/.claude/worktrees/kubb-api-2",
+        repo: "kubb-api-2",
+        repoName: "ngc-auth",
+        branch: "feat/kubb-api-stack",
+        iid: 13,
+        title: "feat!: rebuild on the kubb-api-* stack",
+      }),
+      status,
+    );
+    const lines = text.split("\n");
+    expect(lines[0]).toBe("kubb-api-2  (workspace wD)");
+    expect(lines[1]).toBe("ngc-auth · feat/kubb-api-stack");
+    expect(lines[2]).toBe("/Users/me/code/ngc-auth/.claude/worktrees/kubb-api-2");
+    expect(text).toContain("agent      working");
+    expect(text).toContain("panes      2   tabs   1");
+    expect(text).toContain("focused    yes");
+    expect(text).toContain("!13  feat!: rebuild on the kubb-api-* stack");
+    // The row's own CI/APPR/THR/CMT/AGE aren't repeated here -- they're
+    // already on screen in the table.
+    expect(text).not.toContain("approvals");
+    expect(text).not.toContain("comments");
+  });
+
+  test("null status (herdr workspace get failed) reads '?' for every workspace-state line, not blank", () => {
+    const text = formatPreview(row({ repoName: null }), null);
+    expect(text).toContain("agent      ?");
+    expect(text).toContain("panes      ?   tabs   ?");
+    expect(text).toContain("focused    ?");
   });
 });

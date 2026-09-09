@@ -9,7 +9,12 @@
 // --web` + notification fallback chain; r refreshes the cached data; d/m/s
 // toggle drafts/mine/scope filters (bin/board-rows.ts does the actual
 // toggling + re-read + re-format for all of r/d/m/s, via fzf's own
-// `reload` binding, so none of them need to leave the picker).
+// `reload` binding, so none of them need to leave the picker). The key
+// legend is a `--footer` (needs fzf 0.63+), pinned to the bottom, separate
+// from the column header. Layout is top-down (`--layout reverse`); the
+// right-hand preview pane shows the *workspace* the highlighted row lives
+// in -- its live herdr state (agent/panes/tabs/focus), not a restatement of
+// the row's own MR columns -- via bin/board-rows.ts --preview.
 //
 // This runs as the "picker" plugin pane declared in herdr-plugin.toml
 // (opened by bin/open-pick-mr.ts's `pick-mr` action, or directly with
@@ -27,7 +32,7 @@ import { runCommand } from "../src/exec";
 import { briefError, resolveGlabPath } from "../src/glab";
 import { runHerdr, showNotification } from "../src/herdr";
 import { hookLogger } from "../src/log";
-import { applyFilters, formatRows, sortRows } from "../src/picker";
+import { applyFilters, formatRows, KEY_LEGEND, sortRows } from "../src/picker";
 
 const cfg = loadConfig(configDir(), (m) => console.error(`[glab-status] config: ${m}`));
 const log = hookLogger(cfg.debug);
@@ -45,12 +50,16 @@ async function pick(header: string, lines: string[]): Promise<string | null> {
       [
         "fzf",
         "--ansi",
+        "--layout",
+        "reverse", // top-down: prompt+header at top, list growing down
         "--delimiter",
         "\t",
         "--with-nth",
         "2",
         "--header",
         header,
+        "--footer",
+        KEY_LEGEND,
         "--prompt",
         "MR> ",
         "--expect",
@@ -63,6 +72,12 @@ async function pick(header: string, lines: string[]): Promise<string | null> {
         `m:reload(${BOARD_ROWS} --toggle-mine)`,
         "--bind",
         `s:reload(${BOARD_ROWS} --toggle-scope)`,
+        // Right-hand pane: which workspace the highlighted row lives in,
+        // plus the MR detail the compact row has no room for.
+        "--preview",
+        `${BOARD_ROWS} --preview {1}`,
+        "--preview-window",
+        "right,45%,border-left",
       ],
       { stdin: input, stdout: "pipe", stderr: "inherit" },
     );

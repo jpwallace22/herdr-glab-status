@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { resolveEventWorkspaceId } from "../src/events";
-import { parseWorkspaces } from "../src/herdr";
+import { parseWorkspaceStatus, parseWorkspaces } from "../src/herdr";
 
 const listPayload = {
   id: "cli:workspace:list",
@@ -78,5 +78,33 @@ describe("resolveEventWorkspaceId", () => {
     expect(resolveEventWorkspaceId({ HERDR_WORKSPACE_ID: "" })).toBeNull();
     expect(resolveEventWorkspaceId({ HERDR_PLUGIN_EVENT_JSON: "not json" })).toBeNull();
     expect(resolveEventWorkspaceId({ HERDR_PLUGIN_EVENT_JSON: '{"worktree":{"path":"/x"}}' })).toBeNull();
+  });
+});
+
+describe("parseWorkspaceStatus", () => {
+  test("accepts the `workspace get` payload shape", () => {
+    const payload = {
+      result: {
+        type: "workspace_info",
+        workspace: { workspace_id: "wD", agent_status: "working", pane_count: 2, tab_count: 1, focused: true },
+      },
+    };
+    expect(parseWorkspaceStatus(payload)).toEqual({ agentStatus: "working", paneCount: 2, tabCount: 1, focused: true });
+  });
+
+  test("accepts a bare workspace object too", () => {
+    expect(parseWorkspaceStatus({ workspace_id: "wD", agent_status: "idle", pane_count: 1, tab_count: 1 })).toEqual({
+      agentStatus: "idle",
+      paneCount: 1,
+      tabCount: 1,
+      focused: false,
+    });
+  });
+
+  test("missing/malformed fields fall back sanely; no workspace_id is null", () => {
+    expect(parseWorkspaceStatus({ workspace_id: "wD" })).toEqual({ agentStatus: "unknown", paneCount: 0, tabCount: 0, focused: false });
+    expect(parseWorkspaceStatus({})).toBeNull();
+    expect(parseWorkspaceStatus(null)).toBeNull();
+    expect(parseWorkspaceStatus("nope")).toBeNull();
   });
 });

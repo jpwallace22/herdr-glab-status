@@ -30,6 +30,8 @@ relying on focus events alone.
   (`glab auth status`). The plugin only ever talks to GitLab through `glab`; it
   never reads or handles tokens itself.
 - `git`
+- [`fzf`](https://github.com/junegunn/fzf) >= 0.63, only for `pick-mr` (see
+  "Picking an MR") — everything else works without it.
 
 ## Install
 
@@ -105,12 +107,14 @@ herdr plugin action invoke stop-poller --plugin glab-status
 ## Picking an MR
 
 `bin/pick-mr.ts` lists one row per workspace with an open MR, in an
-[fzf](https://github.com/junegunn/fzf) picker, sorted with the MRs most
-likely to need your attention first (failed pipeline, unresolved threads,
-missing approvals — drafts sink to the bottom). It reads a cache
-(`src/board.ts`, `<state dir>/mr-board.json`) that the background poller
-already keeps fresh every `poll_interval_seconds` — no glab or network call
-at open time, so the list appears instantly (single-digit milliseconds).
+[fzf](https://github.com/junegunn/fzf) picker (top-down layout, key legend
+pinned to the bottom via `--footer`), sorted with the MRs most likely to
+need your attention first (failed pipeline, unresolved threads, missing
+approvals — drafts sink to the bottom). It reads a cache (`src/board.ts`,
+`<state dir>/mr-board.json`) that the background poller already keeps fresh
+every `poll_interval_seconds` — no glab or network call at open time, so
+the list appears instantly (single-digit milliseconds). **Requires fzf
+0.63+** for `--footer`; `brew upgrade fzf` if you're on an older one.
 
 ```bash
 bun bin/pick-mr.ts
@@ -120,6 +124,8 @@ bun bin/pick-mr.ts
 REPO          MR    CI        APPR  THR  CMT  AGE  TITLE
 catalog-ui    !581  ✖ failed  1/3   1    4    22m  feat: update catalog to use a11y-toolkit
 landing-ui    !622  ✔ success 2/3   -    53   3d   chore(e2e): add the service-operations-bot daily triage schedule
+
+[enter]: workspace   [o]: browser   [r]: refresh   [d]: drafts   [m]: mine   [s]: scope   [esc]: quit
 ```
 
 Keys, once the list is up:
@@ -139,6 +145,13 @@ binding (`bin/board-rows.ts`) — none of them close the picker. Filter state
 persists across picker runs (`<state dir>/mr-board-filters.json`) until you
 toggle it back. It requires `fzf` on PATH (`brew install fzf`) and fails
 with a clear message if it's missing.
+
+The right-hand preview pane shows the **workspace** the highlighted row
+lives in, not a restatement of the row itself: its label, repo, branch,
+checkout path, and live herdr state (agent status, pane/tab counts, whether
+it's currently focused) via `herdr workspace get` — the one call in this
+whole picker that isn't just reading a cache, since that state is
+inherently live.
 
 fzf needs a real terminal — it reads the row list from stdin but drives its
 own UI straight over `/dev/tty` — and a plugin action's own command doesn't

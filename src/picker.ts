@@ -4,6 +4,7 @@
 
 import type { BoardFilters } from "./board-filters";
 import type { BoardRow } from "./board";
+import type { WorkspaceStatus } from "./herdr";
 import { pipelineSymbol } from "./label";
 
 // s/d/m filters (see src/board-filters.ts). `currentUsername` is null when
@@ -78,7 +79,7 @@ const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
 
-function ageCell(row: BoardRow, now: number = Date.now()): string {
+export function ageCell(row: BoardRow, now: number = Date.now()): string {
   if (!row.createdAt) return "?";
   const ms = now - Date.parse(row.createdAt);
   if (!Number.isFinite(ms) || ms < 0) return "?";
@@ -97,6 +98,10 @@ export interface FormattedRows {
 
 const COLUMN_TITLES = ["REPO", "MR", "CI", "APPR", "THR", "CMT", "AGE"] as const;
 
+// Printed via `--footer` (fzf 0.63+; see bin/pick-mr.ts), pinned to the
+// bottom of the pane rather than mixed into the column header.
+export const KEY_LEGEND = "[enter]: workspace   [o]: browser   [r]: refresh   [d]: drafts   [m]: mine   [s]: scope   [esc]: quit";
+
 // Fixed-width columns sized to the widest cell (or the header, if that's
 // wider); TITLE left ragged since it's last and terminals/fzf wrap it anyway.
 export function formatRows(rows: BoardRow[], now: number = Date.now()): FormattedRows {
@@ -110,4 +115,24 @@ export function formatRows(rows: BoardRow[], now: number = Date.now()): Formatte
     return `${index}\t${visible}`;
   });
   return { header, lines };
+}
+
+// The right-hand preview for whichever row is highlighted: the *workspace*
+// -- where it lives and its live herdr state (agent, panes/tabs, focus) --
+// not a restatement of the row's own MR columns, which are already on
+// screen. `status` is null when `herdr workspace get` failed or the caller
+// skipped it; every workspace-state line then reads "?" rather than being
+// omitted, so the layout doesn't jump around row to row.
+export function formatPreview(row: BoardRow, status: WorkspaceStatus | null): string {
+  return [
+    `${row.repo}  (workspace ${row.workspaceId})`,
+    row.repoName ? `${row.repoName} · ${row.branch}` : row.branch,
+    row.checkoutPath,
+    "",
+    `agent      ${status?.agentStatus ?? "?"}`,
+    `panes      ${status ? status.paneCount : "?"}   tabs   ${status ? status.tabCount : "?"}`,
+    `focused    ${status ? (status.focused ? "yes" : "no") : "?"}`,
+    "",
+    `!${row.iid}  ${row.title}`,
+  ].join("\n");
 }
