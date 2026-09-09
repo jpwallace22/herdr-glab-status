@@ -51,14 +51,41 @@ function pad(s: string, width: number): string {
   return s.length >= width ? s : s + " ".repeat(width - s.length);
 }
 
+// fzf renders ANSI codes in candidate lines (bin/pick-mr.ts passes --ansi).
+// Colors are applied *after* padding a cell to its column's plain-text
+// width, since the escape codes are invisible but still count toward
+// .length -- coloring first would throw off every column's alignment.
+const RESET = "\x1b[0m";
+const GREEN = "\x1b[32m";
+const RED = "\x1b[31m";
+const YELLOW = "\x1b[33m";
+const CYAN = "\x1b[36m";
+const DIM = "\x1b[2m";
+
+function color(code: string, text: string): string {
+  return `${code}${text}${RESET}`;
+}
+
 function ciCell(row: BoardRow): string {
   if (!row.pipelineStatus) return "-";
   const symbol = pipelineSymbol(row.pipelineStatus);
   return symbol ? `${symbol} ${row.pipelineStatus}` : row.pipelineStatus;
 }
 
+function ciColor(row: BoardRow): string {
+  if (row.pipelineStatus === "success") return GREEN;
+  if (row.pipelineStatus === "failed") return RED;
+  if (row.pipelineStatus === "running") return YELLOW;
+  return DIM;
+}
+
 function apprCell(row: BoardRow): string {
   return row.approvals ? `${row.approvals.given}/${row.approvals.required}` : "?";
+}
+
+function apprColor(row: BoardRow): string {
+  if (!row.approvals) return DIM;
+  return row.approvals.given >= row.approvals.required ? GREEN : YELLOW;
 }
 
 // Zero and "not counted" render the same as the sidebar label does (no ✎N
@@ -67,12 +94,16 @@ function thrCell(row: BoardRow): string {
   return row.unresolved ? String(row.unresolved) : "-";
 }
 
+function thrColor(row: BoardRow): string {
+  return row.unresolved ? RED : DIM;
+}
+
 function cmtCell(row: BoardRow): string {
   return row.comments === null ? "-" : String(row.comments);
 }
 
 function titleCell(row: BoardRow): string {
-  return row.draft ? `[draft] ${row.title}` : row.title;
+  return row.draft ? `${color(YELLOW, "[draft]")} ${row.title}` : row.title;
 }
 
 const MINUTE = 60_000;
@@ -103,16 +134,31 @@ const COLUMN_TITLES = ["REPO", "MR", "CI", "APPR", "THR", "CMT", "AGE"] as const
 export const KEY_LEGEND =
   "[enter]: workspace   [ctrl-o]: browser   [ctrl-r]: refresh   [ctrl-d]: drafts   [alt-m]: mine   [ctrl-s]: scope   [esc]: quit";
 
+// Column separator: three spaces (was two) for a bit more breathing room.
+const COLUMN_GAP = "   ";
+
 // Fixed-width columns sized to the widest cell (or the header, if that's
 // wider); TITLE left ragged since it's last and terminals/fzf wrap it anyway.
+// REPO is always cyan; CI/APPR/THR are colored by what they're reporting
+// (green/red/yellow for attention, dim when there's nothing to flag); CMT
+// and AGE are dim throughout (context, not something to act on); MR and
+// TITLE (besides its own "[draft]" tag) are left in the default color.
 export function formatRows(rows: BoardRow[], now: number = Date.now()): FormattedRows {
   const mrCell = (r: BoardRow) => `!${r.iid}`;
   const cells: ((r: BoardRow) => string)[] = [(r) => r.repo, mrCell, ciCell, apprCell, thrCell, cmtCell, (r) => ageCell(r, now)];
+  const cellColors: (((r: BoardRow) => string) | null)[] = [() => CYAN, null, ciColor, apprColor, thrColor, () => DIM, () => DIM];
   const widths = COLUMN_TITLES.map((title, i) => Math.max(title.length, ...rows.map((r) => cells[i]!(r).length)));
 
-  const header = COLUMN_TITLES.map((title, i) => pad(title, widths[i]!)).join("  ").concat("  TITLE");
+  const header = COLUMN_TITLES.map((title, i) => pad(title, widths[i]!)).join(COLUMN_GAP).concat(`${COLUMN_GAP}TITLE`);
   const lines = rows.map((row, index) => {
-    const visible = cells.map((cell, i) => pad(cell(row), widths[i]!)).join("  ").concat(`  ${titleCell(row)}`);
+    const visible = cells
+      .map((cell, i) => {
+        const padded = pad(cell(row), widths[i]!);
+        const colorFn = cellColors[i];
+        return colorFn ? color(colorFn(row), padded) : padded;
+      })
+      .join(COLUMN_GAP)
+      .concat(`${COLUMN_GAP}${titleCell(row)}`);
     return `${index}\t${visible}`;
   });
   return { header, lines };

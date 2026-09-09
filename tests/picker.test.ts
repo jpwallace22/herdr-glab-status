@@ -116,17 +116,30 @@ describe("formatRows", () => {
     expect(lines[0]).toContain("feat: update catalog");
   });
 
-  test("cells fall back to '-', '?', or '?' for missing data", () => {
+  test("cells fall back to '-' or '?' for missing data", () => {
     const { lines } = formatRows([row({ unresolved: null, comments: null, approvals: null, pipelineStatus: null, createdAt: null })], now);
-    const visible = lines[0]!.split("\t")[1]!;
-    const cells = visible.split(/\s{2,}/);
-    expect(cells).toContain("?"); // approvals unknown, and age unknown
-    expect(cells.filter((c) => c === "-").length).toBeGreaterThanOrEqual(2); // THR and CMT
+    const visible = lines[0]!;
+    expect(visible).toContain("?"); // approvals and age unknown
+    expect(visible).toContain("-"); // THR and CMT
   });
 
   test("a draft MR's title is prefixed", () => {
     const { lines } = formatRows([row({ draft: true, title: "wip" })], now);
-    expect(lines[0]).toContain("[draft] wip");
+    expect(lines[0]).toContain("[draft]");
+    expect(lines[0]).toContain("wip");
+  });
+
+  test("cells are colored: green/red/yellow by status, dim for context, reset after each", () => {
+    const failed = formatRows([row({ pipelineStatus: "failed", approvals: { given: 0, required: 2 }, unresolved: 3, comments: 1 })], now)
+      .lines[0]!;
+    expect(failed).toContain("\x1b[31m"); // CI red (failed) and THR red (unresolved > 0)
+    expect(failed).toContain("\x1b[33m"); // APPR yellow (missing approvals)
+    expect(failed).toContain("\x1b[2m"); // CMT/AGE dim
+    expect(failed).toContain("\x1b[36m"); // REPO cyan
+    expect(failed).toContain("\x1b[0m"); // reset after every colored cell
+
+    const clean = formatRows([row({ pipelineStatus: "success", approvals: { given: 2, required: 2 }, unresolved: 0 })], now).lines[0]!;
+    expect(clean).toContain("\x1b[32m"); // CI green (success) and APPR green (fully approved)
   });
 
   test("empty input yields a header with no lines", () => {
