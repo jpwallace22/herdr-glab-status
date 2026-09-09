@@ -15,6 +15,7 @@ import {
   readBoardCache,
   readCachedUsername,
   refreshBoard,
+  updateBoardCacheForWorkspace,
   writeBoardCache,
   writeCachedUsername,
   type BoardRow,
@@ -183,6 +184,53 @@ describe("refreshBoard", () => {
     const userPath = currentUserPath(dir);
     const rows = await refreshBoard([], cfg, silentLogger, glab, cachePath, userPath);
     expect(rows).toEqual([]);
+    expect(readBoardCache(cachePath)).toEqual([]);
+  });
+});
+
+describe("updateBoardCacheForWorkspace", () => {
+  let dir: string;
+  beforeAll(() => {
+    dir = mkdtempSync(join(tmpdir(), "glab-status-update-board-"));
+  });
+  afterAll(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("splices in just the one workspace's row, leaving the rest of the cache untouched", async () => {
+    const cachePath = join(dir, "splice.json");
+    writeBoardCache(
+      [
+        { workspaceId: "wOther", checkoutPath: "/other", repo: "other", repoName: "other", iid: 99, title: "t", draft: false, pipelineStatus: null, unresolved: null, comments: null, approvals: null, webUrl: null, branch: "b", createdAt: null, authorUsername: null },
+      ],
+      cachePath,
+    );
+    const glab = fakeGlab({ "/a": { branch: "b", mrs: { b: mr(1, { title: "new" }) } } });
+    await updateBoardCacheForWorkspace(ws("wA", "/a"), cfg, silentLogger, glab, cachePath);
+    const rows = readBoardCache(cachePath);
+    expect(rows.map((r) => r.workspaceId).sort()).toEqual(["wA", "wOther"]);
+    expect(rows.find((r) => r.workspaceId === "wA")?.title).toBe("new");
+  });
+
+  test("replaces a stale row for the same workspace rather than duplicating it", async () => {
+    const cachePath = join(dir, "replace.json");
+    const glab1 = fakeGlab({ "/a": { branch: "b", mrs: { b: mr(1, { title: "old" }) } } });
+    await updateBoardCacheForWorkspace(ws("wA", "/a"), cfg, silentLogger, glab1, cachePath);
+    const glab2 = fakeGlab({ "/a": { branch: "b", mrs: { b: mr(1, { title: "updated" }) } } });
+    await updateBoardCacheForWorkspace(ws("wA", "/a"), cfg, silentLogger, glab2, cachePath);
+    const rows = readBoardCache(cachePath);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.title).toBe("updated");
+  });
+
+  test("drops the row when the workspace no longer has an open MR", async () => {
+    const cachePath = join(dir, "drop.json");
+    const glabWithMr = fakeGlab({ "/a": { branch: "b", mrs: { b: mr(1) } } });
+    await updateBoardCacheForWorkspace(ws("wA", "/a"), cfg, silentLogger, glabWithMr, cachePath);
+    expect(readBoardCache(cachePath)).toHaveLength(1);
+
+    const glabNoMr = fakeGlab({ "/a": { branch: "main" } });
+    await updateBoardCacheForWorkspace(ws("wA", "/a"), cfg, silentLogger, glabNoMr, cachePath);
     expect(readBoardCache(cachePath)).toEqual([]);
   });
 });

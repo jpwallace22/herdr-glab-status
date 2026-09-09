@@ -151,6 +151,24 @@ export async function computeBoardRows(workspaces: Workspace[], cfg: Config, log
   return results.filter((row): row is BoardRow => row !== null);
 }
 
+// Recompute and splice in just one workspace's row -- what bin/update.ts's
+// per-workspace event path (workspace.focused/created, worktree.created/
+// opened) calls, so the board catches up with a single fast/throttled
+// workspace check instead of waiting for the next full poller cycle. Drops
+// the row entirely (rather than leaving a stale one) when the workspace no
+// longer has an open MR.
+export async function updateBoardCacheForWorkspace(
+  ws: Workspace,
+  cfg: Config,
+  log: Logger,
+  glab: GlabClient,
+  boardPath?: string,
+): Promise<void> {
+  const row = await computeOne(ws, cfg, log, glab);
+  const rest = readBoardCache(boardPath).filter((r) => r.workspaceId !== ws.workspaceId);
+  writeBoardCache(row ? [...rest, row] : rest, boardPath);
+}
+
 // Compute the board and write it (plus the current username, for "mine") to
 // the cache in one step -- what both the poller and bin/board-rows.ts's
 // `--refresh` actually call.

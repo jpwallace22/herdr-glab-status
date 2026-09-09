@@ -7,10 +7,16 @@
 //   window, and make sure the poller is running (so linking the plugin into a
 //   live server starts polling without a restart).
 //
+// Both paths also update the pick-mr board cache (src/board.ts) for
+// whatever they just refreshed, not just the sidebar's $mr token -- without
+// this, the board only catches up on the poller's own cycle (up to
+// poll_interval_seconds later), so it can visibly lag behind a sidebar that
+// just updated on a focus/create event.
+//
 // Never fail loudly: a noisy hook would spam the plugin log on every focus
 // change. Problems go to stderr, which `herdr plugin log list` shows.
 
-import { refreshBoard } from "../src/board";
+import { refreshBoard, updateBoardCacheForWorkspace } from "../src/board";
 import { loadConfig } from "../src/config";
 import { configDir } from "../src/env";
 import { resolveEventWorkspaceId } from "../src/events";
@@ -67,6 +73,15 @@ async function main(): Promise<void> {
     return;
   }
   await refreshWorkspaces([ws], cfg, log);
+
+  // Keeps pick-mr's board in step with the sidebar token this just
+  // refreshed, instead of only catching up on the next full poller cycle
+  // (up to poll_interval_seconds later) or a manual refresh.
+  try {
+    await updateBoardCacheForWorkspace(ws, cfg, log, createGlabClient(cfg));
+  } catch (err) {
+    log.warn(`${ws.label}: board update failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
 }
 
 main().catch((err) => {
