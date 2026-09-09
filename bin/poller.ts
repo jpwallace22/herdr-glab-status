@@ -1,17 +1,17 @@
 #!/usr/bin/env bun
 // Long-lived background poller. Spawned detached by bin/startup.ts (and by any
-// hook that finds it dead). Refreshes every workspace's $mr token on a period,
-// and exits when herdr goes away, when a stop is requested, or when another
-// poller has taken over the state record.
+// hook that finds it dead). Refreshes every workspace's $mr token and the
+// pick-mr board cache on a period (src/board.ts's refreshTokensAndBoard --
+// one pass over inspectWorkspace for both, not two), and exits when herdr
+// goes away, when a stop is requested, or when another poller has taken
+// over the state record.
 //
 // Output is not captured by herdr; it goes to <state dir>/poller.log.
 
 import { existsSync } from "node:fs";
-import { refreshBoard } from "../src/board";
+import { refreshTokensAndBoard } from "../src/board";
 import { loadConfig } from "../src/config";
 import { configDir, herdrSocketPath, stateDir } from "../src/env";
-import { createGlabClient } from "../src/glab";
-import { listWorkspaces } from "../src/herdr";
 import { fileLogger } from "../src/log";
 import {
   isAlive,
@@ -21,7 +21,7 @@ import {
   stopRequested,
   writeRecord,
 } from "../src/poller-control";
-import { refreshAll, shouldRetrySoon } from "../src/refresh";
+import { shouldRetrySoon, type RefreshSummary } from "../src/refresh";
 
 const HERDR_FAILURE_LIMIT = 3;
 const SLEEP_SLICE_MS = 10_000;
@@ -88,13 +88,23 @@ async function main(): Promise<void> {
     cfg = loadConfig(configDir(), (m) => log.warn(m));
 
     const started = Date.now();
-    const summary = await refreshAll(cfg, {
-      ...log,
-      // The abort message is logged once per outage below, not per cycle.
-      error: (m) => {
-        if (!abortLogged) log.error(m);
-      },
-    });
+    // Refreshes both the sidebar $mr tokens and the pick-mr board cache in
+    // one pass over inspectWorkspace -- see src/board.ts's
+    // refreshTokensAndBoard. A failure anywhere in the board half (e.g. a
+    // disk write) must not take the poller down.
+    let summary: RefreshSummary;
+    try {
+      summary = await refreshTokensAndBoard(cfg, {
+        ...log,
+        // The abort message is logged once per outage below, not per cycle.
+        error: (m) => {
+          if (!abortLogged) log.error(m);
+        },
+      });
+    } catch (err) {
+      log.warn(`refresh failed: ${err instanceof Error ? err.message : String(err)}`);
+      summary = { reported: 0, cleared: 0, kept: 0, failed: 0, aborted: null, herdrUnavailable: false };
+    }
 
     if (summary.herdrUnavailable) {
       herdrFailures++;
@@ -108,19 +118,6 @@ async function main(): Promise<void> {
     } else if (abortLogged) {
       abortLogged = false;
       log.info("glab is working again");
-    }
-
-    // Rich pick-mr board data (title, comments, approvals -- fields the
-    // sidebar's own $mr token never needed) is refreshed on the same
-    // cycle, but only when the token refresh above actually had usable
-    // glab access; there's nothing to gain re-deriving the same failure.
-    if (!summary.herdrUnavailable && !summary.aborted) {
-      try {
-        const workspaces = await listWorkspaces();
-        if (workspaces) await refreshBoard(workspaces, cfg, log, createGlabClient(cfg));
-      } catch (err) {
-        log.warn(`board refresh failed: ${err instanceof Error ? err.message : String(err)}`);
-      }
     }
 
     const retrying = shouldRetrySoon(summary);

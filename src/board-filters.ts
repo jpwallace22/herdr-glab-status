@@ -8,6 +8,13 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { stateDir } from "./env";
 
+// The env var bin/pick-mr.ts sets to its per-session filters path, and
+// bin/board-rows.ts reads -- a named constant shared by both rather than
+// the same string literal typed twice, so a typo in either file fails to
+// compile instead of silently falling back to the default shared path
+// (which is exactly the cross-session filter bug this file's design fixed).
+export const FILTERS_PATH_ENV_VAR = "GLAB_STATUS_FILTERS_PATH";
+
 export interface BoardFilters {
   /** Isolate filter, same pattern as mineOnly/scopeRepo: false shows
    * everything (drafts included, the default); true narrows down to

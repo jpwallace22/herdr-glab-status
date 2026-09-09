@@ -11,6 +11,14 @@
 // inspectWorkspace() from refresh.ts, so it shares that function's branch →
 // MR resolution and transient-failure handling instead of a second,
 // parallel implementation of it.
+//
+// Two ways in: refreshTokensAndBoard() drives refreshWorkspaces() itself
+// and reuses its per-workspace decisions to build rows, so the poller's
+// cycle and the `refresh` action pay for inspectWorkspace's branch/mr-view/
+// discussions calls once, not twice. refreshBoard()/computeBoardRows() run
+// inspectWorkspace independently, for the one caller that doesn't already
+// have a refreshWorkspaces result to reuse (bin/board-rows.ts's on-demand
+// --refresh, triggered from inside the picker).
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -18,10 +26,10 @@ import type { Approvals } from "./approvals";
 import { parseApprovals } from "./approvals";
 import type { Config } from "./config";
 import { stateDir } from "./env";
-import type { GlabClient } from "./glab";
-import type { Workspace } from "./herdr";
+import { createGlabClient, type GlabClient } from "./glab";
+import { listWorkspaces, type Workspace } from "./herdr";
 import type { Logger } from "./log";
-import { inspectWorkspace } from "./refresh";
+import { inspectWorkspace, refreshWorkspaces, type Decision, type RefreshSummary } from "./refresh";
 
 export interface BoardRow {
   workspaceId: string;
@@ -110,16 +118,14 @@ export async function fetchCurrentUsername(glab: GlabClient, cwd: string): Promi
   }
 }
 
-async function computeOne(ws: Workspace, cfg: Config, log: Logger, glab: GlabClient): Promise<BoardRow | null> {
-  let decision: Awaited<ReturnType<typeof inspectWorkspace>>;
-  try {
-    decision = await inspectWorkspace(ws, cfg, glab);
-  } catch (err) {
-    log.warn(`${ws.label}: ${err instanceof Error ? err.message : String(err)}`);
-    return null;
-  }
+// Build one board row from a decision already computed by inspectWorkspace
+// (directly, or via refreshWorkspaces' onDecision callback) -- the shared
+// tail end of both computeOne (which does its own inspectWorkspace call)
+// and the combined refresh below (which reuses refreshWorkspaces' own
+// decisions instead of re-deriving them). null for anything that isn't an
+// open MR; never called with an "abort" decision (callers check first).
+async function boardRowFromDecision(ws: Workspace, decision: Decision, glab: GlabClient): Promise<BoardRow | null> {
   if (decision.kind !== "report" || decision.mr.state !== "opened") return null;
-
   const { mr, unresolved, branch } = decision;
   const approvals = await fetchApprovals(glab, mr.projectId, mr.iid, ws.checkoutPath);
   return {
@@ -141,37 +147,68 @@ async function computeOne(ws: Workspace, cfg: Config, log: Logger, glab: GlabCli
   };
 }
 
+// Inspect one workspace end to end for board.ts's own callers (the ones
+// that don't already have a decision from refreshWorkspaces -- currently
+// just bin/board-rows.ts's on-demand --refresh). An abort (glab missing or
+// unauthenticated) is logged and treated as "no row" rather than silently
+// dropped: previously this was indistinguishable from "no MR", so a glab
+// auth failure emptied the board with no trace of why.
+async function computeOne(ws: Workspace, cfg: Config, log: Logger, glab: GlabClient): Promise<BoardRow | null> {
+  let decision: Decision;
+  try {
+    decision = await inspectWorkspace(ws, cfg, glab);
+  } catch (err) {
+    log.warn(`${ws.label}: ${err instanceof Error ? err.message : String(err)}`);
+    return null;
+  }
+  if (decision.kind === "abort") {
+    log.error(decision.message);
+    return null;
+  }
+  return boardRowFromDecision(ws, decision, glab);
+}
+
 // Compute every workspace's board row concurrently: this is either the
 // poller's own periodic cycle (background, latency doesn't matter much) or
 // an explicit on-demand refresh a person is waiting on, and either way
 // there's no reason to make one workspace's slow glab call hold up another
-// workspace's fast one. Rows come back in `workspaces` order.
+// workspace's fast one. Rows come back in `workspaces` order. If more than
+// one workspace aborts in the same batch (e.g. glab is globally
+// unauthenticated), only the first is logged -- they're all the same
+// underlying problem.
 export async function computeBoardRows(workspaces: Workspace[], cfg: Config, log: Logger, glab: GlabClient): Promise<BoardRow[]> {
-  const results = await Promise.all(workspaces.map((ws) => computeOne(ws, cfg, log, glab)));
+  let abortLogged = false;
+  const dedupedLog: Logger = { ...log, error: (m) => { if (!abortLogged) { abortLogged = true; log.error(m); } } };
+  const results = await Promise.all(workspaces.map((ws) => computeOne(ws, cfg, dedupedLog, glab)));
   return results.filter((row): row is BoardRow => row !== null);
 }
 
-// Recompute and splice in just one workspace's row -- what bin/update.ts's
-// per-workspace event path (workspace.focused/created, worktree.created/
-// opened) calls, so the board catches up with a single fast/throttled
-// workspace check instead of waiting for the next full poller cycle. Drops
-// the row entirely (rather than leaving a stale one) when the workspace no
-// longer has an open MR.
-export async function updateBoardCacheForWorkspace(
+// Splice one workspace's row into the existing board cache, from a decision
+// already computed elsewhere (refreshWorkspaces' onDecision callback) --
+// what bin/update.ts's per-workspace event path calls, so the board catches
+// up with the same single inspectWorkspace check that just refreshed the
+// sidebar token, instead of running a second one. Drops the row when the
+// workspace no longer has an open MR; leaves the cache untouched on abort
+// (same "don't blank on a transient/auth failure" rule as the sidebar
+// token -- refreshWorkspaces already logged it once).
+export async function updateBoardCacheFromDecision(
   ws: Workspace,
-  cfg: Config,
-  log: Logger,
+  decision: Decision,
   glab: GlabClient,
   boardPath?: string,
 ): Promise<void> {
-  const row = await computeOne(ws, cfg, log, glab);
+  if (decision.kind === "abort") return;
+  const row = await boardRowFromDecision(ws, decision, glab);
   const rest = readBoardCache(boardPath).filter((r) => r.workspaceId !== ws.workspaceId);
   writeBoardCache(row ? [...rest, row] : rest, boardPath);
 }
 
 // Compute the board and write it (plus the current username, for "mine") to
-// the cache in one step -- what both the poller and bin/board-rows.ts's
-// `--refresh` actually call.
+// the cache in one step -- what bin/board-rows.ts's on-demand `--refresh`
+// calls. Runs inspectWorkspace itself (via computeBoardRows); for the
+// poller/refresh-action paths, which already need the same per-workspace
+// check for the sidebar token, use refreshTokensAndBoard below instead so
+// that work isn't done twice.
 export async function refreshBoard(
   workspaces: Workspace[],
   cfg: Config,
@@ -187,4 +224,41 @@ export async function refreshBoard(
     writeCachedUsername(username, userPath);
   }
   return rows;
+}
+
+// Refreshes both the sidebar $mr tokens (refreshWorkspaces, unchanged
+// behavior) and the board cache in one pass over inspectWorkspace instead
+// of two independent ones -- what the poller's cycle and the `refresh`
+// action both want. Lists workspaces itself (mirrors refresh.ts's
+// refreshAll) so callers don't have to fetch them twice either. Skips the
+// board write entirely when the token refresh couldn't reach herdr or
+// aborted (nothing usable to build rows from).
+export async function refreshTokensAndBoard(
+  cfg: Config,
+  log: Logger,
+  glab?: GlabClient,
+  boardPath?: string,
+  userPath?: string,
+): Promise<RefreshSummary> {
+  const workspaces = await listWorkspaces();
+  if (workspaces === null) {
+    log.warn("could not list workspaces (is the herdr server running?)");
+    return { reported: 0, cleared: 0, kept: 0, failed: 0, aborted: null, herdrUnavailable: true };
+  }
+  const resolvedGlab = glab ?? createGlabClient(cfg);
+
+  const decisions: { ws: Workspace; decision: Decision }[] = [];
+  const summary = await refreshWorkspaces(workspaces, cfg, log, resolvedGlab, (ws, decision) => decisions.push({ ws, decision }));
+
+  if (!summary.herdrUnavailable && !summary.aborted) {
+    const rows = (
+      await Promise.all(decisions.map(({ ws, decision }) => boardRowFromDecision(ws, decision, resolvedGlab)))
+    ).filter((row): row is BoardRow => row !== null);
+    writeBoardCache(rows, boardPath);
+    if (workspaces[0]) {
+      const username = await fetchCurrentUsername(resolvedGlab, workspaces[0].checkoutPath);
+      writeCachedUsername(username, userPath);
+    }
+  }
+  return summary;
 }

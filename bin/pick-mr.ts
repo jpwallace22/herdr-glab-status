@@ -37,7 +37,7 @@ import { unlinkSync } from "node:fs";
 import { join } from "node:path";
 import type { BoardRow } from "../src/board";
 import { readBoardCache, readCachedUsername } from "../src/board";
-import { readFilters } from "../src/board-filters";
+import { FILTERS_PATH_ENV_VAR, readFilters } from "../src/board-filters";
 import { focusOrOpenTab } from "../src/browser";
 import { loadConfig } from "../src/config";
 import { configDir, pluginRoot, stateDir } from "../src/env";
@@ -54,7 +54,7 @@ const BOARD_ROWS = ["bun", `${pluginRoot()}/bin/board-rows.ts`].join(" ");
 
 // Unique per invocation (pid), never reused, deleted below on exit.
 const SESSION_FILTERS_PATH = join(stateDir(), `mr-board-filters-${process.pid}.json`);
-process.env.GLAB_STATUS_FILTERS_PATH = SESSION_FILTERS_PATH;
+process.env[FILTERS_PATH_ENV_VAR] = SESSION_FILTERS_PATH;
 process.on("exit", () => {
   try {
     unlinkSync(SESSION_FILTERS_PATH);

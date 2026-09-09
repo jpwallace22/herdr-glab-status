@@ -23,7 +23,7 @@
 // persist across sessions. Falls back to src/board-filters.ts's own
 // default path when unset, for standalone `bun bin/board-rows.ts` use.
 
-import { toggleDrafts, toggleMine, toggleScope, readFilters } from "../src/board-filters";
+import { toggleDrafts, toggleMine, toggleScope, readFilters, FILTERS_PATH_ENV_VAR } from "../src/board-filters";
 import { readBoardCache, readCachedUsername, refreshBoard } from "../src/board";
 import { loadConfig } from "../src/config";
 import { configDir } from "../src/env";
@@ -42,7 +42,7 @@ const PREVIEW_SCROLLBACK_LINES = 300;
 // undefined (not set) falls back to src/board-filters.ts's own shared
 // default path -- only reachable via standalone use, not through the
 // picker (bin/pick-mr.ts always sets this).
-const filtersPath = process.env.GLAB_STATUS_FILTERS_PATH || undefined;
+const filtersPath = process.env[FILTERS_PATH_ENV_VAR] || undefined;
 
 // The repo of the workspace this pane belongs to, for "scope" -- plugin
 // panes get HERDR_WORKSPACE_ID the same as actions do.
@@ -69,12 +69,14 @@ async function main(): Promise<void> {
       console.log("(no row selected)");
       return;
     }
-    console.log(formatPreview(row, await getWorkspaceStatus(row.workspaceId)));
+    // fzf calls this on every arrow key, so these two independent herdr
+    // calls run concurrently rather than one waiting on the other.
+    const [status, agents] = await Promise.all([getWorkspaceStatus(row.workspaceId), listAgents()]);
+    console.log(formatPreview(row, status));
 
     // The actual workspace, not just facts about it: whichever pane in it
     // has a detected agent, live -- same source and intent as sessionizer's
     // own agent-view preview.
-    const agents = await listAgents();
     const agent = agents?.find((a) => a.workspaceId === row.workspaceId) ?? null;
     const content = agent ? await readAgent(agent.paneId, PREVIEW_SCROLLBACK_LINES) : null;
     console.log("");
