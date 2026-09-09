@@ -259,6 +259,21 @@ describe("refreshWorkspaces", () => {
     for (const id of ["wA", "wB", "wC"]) expect(lastCheckMs(id)).toBeGreaterThanOrEqual(before);
   });
 
+  test("onDecision fires once per workspace actually inspected, with its exact decision", async () => {
+    const glab = fakeGlab({
+      "/a": { branch: "feat/a", mrs: { "feat/a": mr(10) } },
+      "/b": { branch: "main" },
+    });
+    const seen: { id: string; kind: string }[] = [];
+    await refreshWorkspaces([ws("wA", "/a"), ws("wB", "/b")], cfg, silentLogger, glab, (workspace, decision) =>
+      seen.push({ id: workspace.workspaceId, kind: decision.kind }),
+    );
+    expect(seen).toEqual([
+      { id: "wA", kind: "report" },
+      { id: "wB", kind: "clear" },
+    ]);
+  });
+
   test("abort clears the failing and all remaining workspaces, logs once, and stops", async () => {
     const glab = fakeGlab({
       "/a": { branch: "a", mrs: { a: mr(1) } },
@@ -282,6 +297,17 @@ describe("refreshWorkspaces", () => {
       ["wB", "--clear-token"],
       ["wC", "--clear-token"],
     ]);
+  });
+
+  test("onDecision fires for the aborting workspace but not for the ones bulk-cleared after it", async () => {
+    const glab = fakeGlab({
+      "/a": { branch: "a", mrs: { a: mr(1) } },
+      "/b": { branch: "b", mrs: { b: UNAUTHORIZED } },
+      "/c": { branch: "c", mrs: { c: mr(3) } },
+    });
+    const seen: string[] = [];
+    await refreshWorkspaces([ws("wA", "/a"), ws("wB", "/b"), ws("wC", "/c")], cfg, silentLogger, glab, (workspace) => seen.push(workspace.workspaceId));
+    expect(seen).toEqual(["wA", "wB"]); // wC never got its own inspectWorkspace call
   });
 
   test("a throwing glab client for one workspace does not stop the others, and keeps its token", async () => {

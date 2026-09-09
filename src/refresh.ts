@@ -11,7 +11,7 @@ import { recordCheck } from "./throttle";
 export type Decision =
   | { kind: "clear"; reason: string }
   | { kind: "keep"; reason: string }
-  | { kind: "report"; label: string; mr: MrSummary; unresolved: number | null; warning: string | null }
+  | { kind: "report"; label: string; mr: MrSummary; unresolved: number | null; warning: string | null; branch: string }
   | { kind: "abort"; failure: "auth" | "missing"; message: string };
 
 const clear = (reason: string): Decision => ({ kind: "clear", reason });
@@ -67,7 +67,7 @@ export async function inspectWorkspace(ws: Workspace, cfg: Config, glab: GlabCli
     }
   }
 
-  return { kind: "report", label: formatLabel(mr, unresolved), mr, unresolved, warning };
+  return { kind: "report", label: formatLabel(mr, unresolved), mr, unresolved, warning, branch };
 }
 
 function isAbort(value: unknown): value is Extract<Decision, { kind: "abort" }> {
@@ -118,11 +118,18 @@ export async function applyDecision(ws: Workspace, decision: Decision, cfg: Conf
 // Refresh the given workspaces sequentially. On an abort (glab missing or
 // unauthenticated) the error is logged once, every remaining token is cleared
 // so nothing stale lingers, and the run stops.
+//
+// `onDecision`, if given, is called once per workspace actually inspected
+// (not the ones bulk-cleared after an abort) right after its decision is
+// known -- so a caller that needs the same per-workspace result for
+// something else (src/board.ts's board cache) can reuse it instead of
+// running inspectWorkspace a second time.
 export async function refreshWorkspaces(
   workspaces: Workspace[],
   cfg: Config,
   log: Logger,
   glab: GlabClient = createGlabClient(cfg),
+  onDecision?: (ws: Workspace, decision: Decision) => void,
 ): Promise<RefreshSummary> {
   const summary: RefreshSummary = { reported: 0, cleared: 0, kept: 0, failed: 0, aborted: null, herdrUnavailable: false };
 
@@ -136,6 +143,7 @@ export async function refreshWorkspaces(
       // throw is itself a transient condition, not proof there is no MR.
       decision = keep(`unexpected error: ${err instanceof Error ? err.message : String(err)}`);
     }
+    onDecision?.(ws, decision);
     recordCheck(ws.workspaceId, Date.now());
 
     if (decision.kind === "abort") {

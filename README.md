@@ -30,6 +30,8 @@ relying on focus events alone.
   (`glab auth status`). The plugin only ever talks to GitLab through `glab`; it
   never reads or handles tokens itself.
 - `git`
+- [`fzf`](https://github.com/junegunn/fzf) >= 0.63, only for `pick-mr` (see
+  "Picking an MR") — everything else works without it.
 
 ## Install
 
@@ -84,6 +86,13 @@ key = "prefix+shift+o"
 type = "plugin_action"
 command = "glab-status.open-mr"
 description = "open GitLab MR"
+
+# pick one of your open MRs with fzf (see "Picking an MR" below)
+[[keys.command]]
+key = "prefix+shift+p"
+type = "plugin_action"
+command = "glab-status.pick-mr"
+description = "pick a GitLab MR"
 ```
 
 The same actions work from a shell:
@@ -91,8 +100,84 @@ The same actions work from a shell:
 ```bash
 herdr plugin action invoke refresh --plugin glab-status
 herdr plugin action invoke open-mr --plugin glab-status
+herdr plugin action invoke pick-mr --plugin glab-status
 herdr plugin action invoke stop-poller --plugin glab-status
 ```
+
+## Picking an MR
+
+`bin/pick-mr.ts` lists one row per workspace with an open MR, in an
+[fzf](https://github.com/junegunn/fzf) picker (top-down layout, key legend
+pinned to the bottom via `--footer`), sorted with the MRs most likely to
+need your attention first (failed pipeline, unresolved threads, missing
+approvals — drafts sink to the bottom). It reads a cache (`src/board.ts`,
+`<state dir>/mr-board.json`) that the background poller already keeps fresh
+every `poll_interval_seconds` — no glab or network call at open time, so
+the list appears instantly (single-digit milliseconds). **Requires fzf
+0.63+** for `--footer`; `brew upgrade fzf` if you're on an older one.
+
+```bash
+bun bin/pick-mr.ts
+```
+
+```
+REPO          MR    CI        APPR  THR  CMT  AGE  TITLE
+catalog-ui    !581  ✖ failed  1/3   1    4    22m  feat: update catalog to use a11y-toolkit
+landing-ui    !622  ✔ success 2/3   -    53   3d   chore(e2e): add the service-operations-bot daily triage schedule
+
+[enter]: workspace   [ctrl-o]: browser   [ctrl-r]: refresh   [ctrl-d]: drafts only   [alt-m]: mine only   [ctrl-s]: scope   [esc]: quit
+```
+
+Keys, once the list is up:
+
+| Key | Action |
+| --- | --- |
+| `enter` | Jump to that MR's workspace (`herdr workspace focus`) |
+| `ctrl-o` | Open that MR in the browser instead, reusing `open-mr`'s tab-reuse and notification fallback |
+| `ctrl-r` | Refresh the cached data (a live glab pass, same as the `refresh` action) |
+| `ctrl-d` | Toggle narrowing the list down to *only* drafts (default: everything, drafts included) |
+| `alt-m` | Toggle narrowing the list down to *only* MRs you authored |
+| `ctrl-s` | Toggle scoping to the repo of the workspace you opened the picker from |
+| any other text | Fuzzy-filters the list, as usual for fzf |
+
+`ctrl-d`/`alt-m`/`ctrl-s` are all isolate filters (narrow down to X), not
+show/hide toggles — pressing one doesn't remove anything from view except
+by narrowing to a subset, the same way `ctrl-s` doesn't hide other repos'
+MRs so much as focus on one.
+
+Everything but `enter` is `ctrl-`-prefixed (or `alt-m` for mine — `ctrl-m`
+is the same byte terminals send for Enter, so it can't be bound
+separately) so plain letters go to the search box instead of triggering an
+action — you can type "docker" without `d` toggling drafts partway through.
+
+`ctrl-d`/`alt-m`/`ctrl-s`/`ctrl-r` all replace the list in place via fzf's
+own `reload` binding (`bin/board-rows.ts`) — none of them close the picker.
+Filter state is per-session, not persisted: closing the picker and opening
+it again always starts from the defaults (all open MRs, no scope), never
+remembering a filter you toggled last time. It requires `fzf` on PATH
+(`brew install fzf`) and
+fails with a clear message if it's missing.
+
+The right-hand preview pane shows the **workspace** the highlighted row
+lives in, not a restatement of the row itself: a small identity block
+(label, repo, branch, checkout path, live pane/tab counts and focus state
+via `herdr workspace get`), then the actual live scrollback of whichever
+pane in that workspace has a detected agent (`herdr agent list` +
+`herdr agent read`) — the same source and intent as the `sessionizer`
+plugin's own agent-view preview. All local socket calls, not glab; the one
+part of this whole picker that isn't just reading a cache, since live pane
+content and agent/focus state aren't something a poller cycle could
+usefully snapshot.
+
+fzf needs a real terminal — it reads the row list from stdin but drives its
+own UI straight over `/dev/tty` — and a plugin action's own command doesn't
+get one. So the interactive picker runs as a herdr **plugin pane** instead
+(`[[panes]] id = "picker"` in `herdr-plugin.toml`, `placement = "overlay"`),
+which is a real pane like any other and does get a terminal; the `pick-mr`
+**action** (`herdr plugin action invoke pick-mr --plugin glab-status`, or the
+keybinding above) just opens/focuses that pane — the same pattern the
+`sessionizer` plugin already installed on this machine uses for its own fzf
+picker. `bun bin/pick-mr.ts` also still works run directly in any pane.
 
 ## How it stays fresh
 
@@ -109,6 +194,12 @@ Per workspace, a refresh is `git branch --show-current`, then
 the project from the git remote), then one paginated pass over the MR's
 discussions API. That is two GitLab API calls for a workspace with an MR and one
 for a workspace without. Workspaces are processed sequentially.
+
+The poller (and an explicit `refresh` action) also recompute the `pick-mr`
+board cache once per cycle — every workspace concurrently this time, plus
+one `glab api .../approvals` call per open MR (a field the sidebar token
+never needed) — and write it to `<state dir>/mr-board.json`. This is what
+lets `pick-mr` itself never touch glab when it opens.
 
 Branches named `mr-<iid>-review` are treated as local scratch checkouts of MR
 `<iid>` and resolved by iid instead of by source branch.
@@ -223,10 +314,13 @@ herdr plugin log list --plugin glab-status
 herdr plugin unlink glab-status
 ```
 
-Layout: `herdr-plugin.toml` (manifest), `bin/` (hook and action entrypoints:
-`startup`, `update`, `poller`, `open-mr`, `stop`), `src/` (label formatting,
-branch → MR resolution, discussion paging, glab/herdr wrappers, refresh loop,
-poller control, macOS tab-reuse for `open-mr`), `tests/`.
+Layout: `herdr-plugin.toml` (manifest), `bin/` (hook, action, and plugin-pane
+entrypoints: `startup`, `update`, `poller`, `open-mr`, `open-pick-mr`,
+`pick-mr`, `board-rows`, `stop`), `src/` (label formatting, branch → MR
+resolution, discussion paging, glab/herdr wrappers, refresh loop, poller
+control, macOS tab-reuse for `open-mr`, `board.ts`'s pick-mr board
+computation/caching, `board-filters.ts`'s s/d/m toggle state, `picker.ts`'s
+filtering/sorting/formatting over the cached board), `tests/`.
 
 Why Bun/TypeScript: it matches the gh-pr reference plugin, needs no build step or
 dependencies (Bun runs `.ts` directly and ships a TOML parser), and gives the

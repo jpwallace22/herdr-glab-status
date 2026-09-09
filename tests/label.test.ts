@@ -71,6 +71,10 @@ describe("parseMrView", () => {
       project_id: 272587,
       web_url: "https://gitlab.example.com/g/p/-/merge_requests/67",
       head_pipeline: { status: "running", id: 1 },
+      title: "feat: add widget",
+      user_notes_count: 4,
+      created_at: "2026-09-08T12:00:00Z",
+      author: { username: "patc" },
     });
     expect(parseMrView(json)).toEqual({
       iid: 67,
@@ -79,13 +83,21 @@ describe("parseMrView", () => {
       pipelineStatus: "running",
       webUrl: "https://gitlab.example.com/g/p/-/merge_requests/67",
       projectId: 272587,
+      title: "feat: add widget",
+      commentCount: 4,
+      createdAt: "2026-09-08T12:00:00Z",
+      authorUsername: "patc",
     });
   });
 
-  test("tolerates a missing pipeline", () => {
+  test("tolerates a missing pipeline, title, comment count, created_at, and author", () => {
     const mr = parseMrView(JSON.stringify({ iid: 1, state: "merged", draft: false, head_pipeline: null }));
     expect(mr?.pipelineStatus).toBeNull();
     expect(mr?.state).toBe("merged");
+    expect(mr?.title).toBe("");
+    expect(mr?.commentCount).toBeNull();
+    expect(mr?.authorUsername).toBeNull();
+    expect(mr?.createdAt).toBeNull();
   });
 
   test("rejects non-MR payloads", () => {

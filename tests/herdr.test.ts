@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { resolveEventWorkspaceId } from "../src/events";
-import { parseWorkspaces } from "../src/herdr";
+import { parseAgentList, parseWorkspaceStatus, parseWorkspaces } from "../src/herdr";
 
 const listPayload = {
   id: "cli:workspace:list",
@@ -11,7 +11,8 @@ const listPayload = {
       {
         workspace_id: "wH",
         label: "landing-ui",
-        worktree: { checkout_path: "/Users/me/code/landing-ui", is_linked_worktree: false },
+        worktree: { checkout_path: "/Users/me/code/landing-ui", is_linked_worktree: false, repo_name: "landing-ui" },
+        tokens: { mr: "!581 ✖ ✎1" },
       },
       { workspace_id: "wX", label: "broken", worktree: { checkout_path: "" } },
       { workspace_id: "", label: "no-id", worktree: { checkout_path: "/tmp/x" } },
@@ -20,22 +21,36 @@ const listPayload = {
 };
 
 describe("parseWorkspaces", () => {
-  test("keeps only workspaces with a checkout path", () => {
+  test("keeps only workspaces with a checkout path, and carries the $mr token + repo name", () => {
     expect(parseWorkspaces(listPayload)).toEqual([
-      { workspaceId: "wH", label: "landing-ui", checkoutPath: "/Users/me/code/landing-ui" },
+      {
+        workspaceId: "wH",
+        label: "landing-ui",
+        checkoutPath: "/Users/me/code/landing-ui",
+        mrToken: "!581 ✖ ✎1",
+        repoName: "landing-ui",
+      },
     ]);
+  });
+
+  test("no tokens.mr/repo_name (or empty ones) are null, not undefined or ''", () => {
+    const payload = { workspaces: [{ workspace_id: "w1", worktree: { checkout_path: "/a" } }] };
+    expect(parseWorkspaces(payload)).toEqual([{ workspaceId: "w1", label: "w1", checkoutPath: "/a", mrToken: null, repoName: null }]);
+    const empty = { workspaces: [{ workspace_id: "w1", worktree: { checkout_path: "/a", repo_name: "" }, tokens: { mr: "" } }] };
+    expect(parseWorkspaces(empty)[0]?.mrToken).toBeNull();
+    expect(parseWorkspaces(empty)[0]?.repoName).toBeNull();
   });
 
   test("accepts the workspace get payload", () => {
     const payload = {
       result: { type: "workspace_info", workspace: { workspace_id: "wG", label: "g", worktree: { checkout_path: "/p" } } },
     };
-    expect(parseWorkspaces(payload)).toEqual([{ workspaceId: "wG", label: "g", checkoutPath: "/p" }]);
+    expect(parseWorkspaces(payload)).toEqual([{ workspaceId: "wG", label: "g", checkoutPath: "/p", mrToken: null, repoName: null }]);
   });
 
   test("accepts a bare array and tolerates junk", () => {
     expect(parseWorkspaces([{ workspace_id: "w1", worktree: { checkout_path: "/a" } }, null, 3])).toEqual([
-      { workspaceId: "w1", label: "w1", checkoutPath: "/a" },
+      { workspaceId: "w1", label: "w1", checkoutPath: "/a", mrToken: null, repoName: null },
     ]);
     expect(parseWorkspaces(null)).toEqual([]);
     expect(parseWorkspaces("nope")).toEqual([]);
@@ -63,5 +78,58 @@ describe("resolveEventWorkspaceId", () => {
     expect(resolveEventWorkspaceId({ HERDR_WORKSPACE_ID: "" })).toBeNull();
     expect(resolveEventWorkspaceId({ HERDR_PLUGIN_EVENT_JSON: "not json" })).toBeNull();
     expect(resolveEventWorkspaceId({ HERDR_PLUGIN_EVENT_JSON: '{"worktree":{"path":"/x"}}' })).toBeNull();
+  });
+});
+
+describe("parseWorkspaceStatus", () => {
+  test("accepts the `workspace get` payload shape", () => {
+    const payload = {
+      result: {
+        type: "workspace_info",
+        workspace: { workspace_id: "wD", agent_status: "working", pane_count: 2, tab_count: 1, focused: true },
+      },
+    };
+    expect(parseWorkspaceStatus(payload)).toEqual({ agentStatus: "working", paneCount: 2, tabCount: 1, focused: true });
+  });
+
+  test("accepts a bare workspace object too", () => {
+    expect(parseWorkspaceStatus({ workspace_id: "wD", agent_status: "idle", pane_count: 1, tab_count: 1 })).toEqual({
+      agentStatus: "idle",
+      paneCount: 1,
+      tabCount: 1,
+      focused: false,
+    });
+  });
+
+  test("missing/malformed fields fall back sanely; no workspace_id is null", () => {
+    expect(parseWorkspaceStatus({ workspace_id: "wD" })).toEqual({ agentStatus: "unknown", paneCount: 0, tabCount: 0, focused: false });
+    expect(parseWorkspaceStatus({})).toBeNull();
+    expect(parseWorkspaceStatus(null)).toBeNull();
+    expect(parseWorkspaceStatus("nope")).toBeNull();
+  });
+});
+
+describe("parseAgentList", () => {
+  test("accepts the `agent list` payload shape", () => {
+    const payload = {
+      id: "cli:agent:list",
+      result: {
+        agents: [
+          { agent: "claude", agent_status: "working", pane_id: "wD:p1", workspace_id: "wD" },
+          { agent: "claude", agent_status: "idle", pane_id: "wG:p1", workspace_id: "wG" },
+        ],
+      },
+    };
+    expect(parseAgentList(payload)).toEqual([
+      { paneId: "wD:p1", workspaceId: "wD", agent: "claude", agentStatus: "working" },
+      { paneId: "wG:p1", workspaceId: "wG", agent: "claude", agentStatus: "idle" },
+    ]);
+  });
+
+  test("skips entries missing pane_id/workspace_id, and tolerates junk", () => {
+    expect(parseAgentList({ result: { agents: [{ agent: "claude" }, null, 3] } })).toEqual([]);
+    expect(parseAgentList(null)).toEqual([]);
+    expect(parseAgentList("nope")).toEqual([]);
+    expect(parseAgentList({ result: {} })).toEqual([]);
   });
 });
