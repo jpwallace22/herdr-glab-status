@@ -12,6 +12,7 @@ const listPayload = {
         workspace_id: "wH",
         label: "landing-ui",
         worktree: { checkout_path: "/Users/me/code/landing-ui", is_linked_worktree: false },
+        tokens: { mr: "!581 ✖ ✎1" },
       },
       { workspace_id: "wX", label: "broken", worktree: { checkout_path: "" } },
       { workspace_id: "", label: "no-id", worktree: { checkout_path: "/tmp/x" } },
@@ -20,22 +21,29 @@ const listPayload = {
 };
 
 describe("parseWorkspaces", () => {
-  test("keeps only workspaces with a checkout path", () => {
+  test("keeps only workspaces with a checkout path, and carries the $mr token", () => {
     expect(parseWorkspaces(listPayload)).toEqual([
-      { workspaceId: "wH", label: "landing-ui", checkoutPath: "/Users/me/code/landing-ui" },
+      { workspaceId: "wH", label: "landing-ui", checkoutPath: "/Users/me/code/landing-ui", mrToken: "!581 ✖ ✎1" },
     ]);
+  });
+
+  test("no tokens.mr (or an empty one) is null, not undefined or ''", () => {
+    const payload = { workspaces: [{ workspace_id: "w1", worktree: { checkout_path: "/a" } }] };
+    expect(parseWorkspaces(payload)).toEqual([{ workspaceId: "w1", label: "w1", checkoutPath: "/a", mrToken: null }]);
+    const empty = { workspaces: [{ workspace_id: "w1", worktree: { checkout_path: "/a" }, tokens: { mr: "" } }] };
+    expect(parseWorkspaces(empty)[0]?.mrToken).toBeNull();
   });
 
   test("accepts the workspace get payload", () => {
     const payload = {
       result: { type: "workspace_info", workspace: { workspace_id: "wG", label: "g", worktree: { checkout_path: "/p" } } },
     };
-    expect(parseWorkspaces(payload)).toEqual([{ workspaceId: "wG", label: "g", checkoutPath: "/p" }]);
+    expect(parseWorkspaces(payload)).toEqual([{ workspaceId: "wG", label: "g", checkoutPath: "/p", mrToken: null }]);
   });
 
   test("accepts a bare array and tolerates junk", () => {
     expect(parseWorkspaces([{ workspace_id: "w1", worktree: { checkout_path: "/a" } }, null, 3])).toEqual([
-      { workspaceId: "w1", label: "w1", checkoutPath: "/a" },
+      { workspaceId: "w1", label: "w1", checkoutPath: "/a", mrToken: null },
     ]);
     expect(parseWorkspaces(null)).toEqual([]);
     expect(parseWorkspaces("nope")).toEqual([]);

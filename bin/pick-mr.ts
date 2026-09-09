@@ -1,7 +1,12 @@
 #!/usr/bin/env bun
 // `pick-mr`: fzf-pick one of your open GitLab MRs across every workspace
-// herdr tracks, then open it in the browser (reusing open-mr.ts's tab-reuse
-// + `glab mr view --web` + notification fallback chain).
+// herdr tracks, then open it in the browser.
+//
+// Listing is instant and does no glab/network work at all: it reads the
+// `$mr` token herdr already has cached per workspace (src/picker.ts), the
+// same token already sitting in the sidebar. Only opening the one you pick
+// does a live glab call (reusing open-mr.ts's tab-reuse + `glab mr view
+// --web` + notification fallback chain) -- and only for that one MR.
 //
 // fzf needs a real terminal: it reads the row list from stdin but drives its
 // own UI straight over /dev/tty, so this only works run from an actual pane
@@ -14,18 +19,9 @@ import { configDir } from "../src/env";
 import { runCommand } from "../src/exec";
 import { briefError, createGlabClient, resolveGlabPath } from "../src/glab";
 import { listWorkspaces, showNotification } from "../src/herdr";
+import { parseMrView } from "../src/label";
 import { hookLogger } from "../src/log";
 import { collectRows, formatRows, sortRows } from "../src/picker";
-
-// Collecting rows is sequential and network-bound (see src/picker.ts), so it
-// can take the better part of a minute across several workspaces with
-// nothing else on screen. Without this, that wait is indistinguishable from
-// the picker having done nothing at all.
-function printProgress(index: number, total: number, label: string): void {
-  const bar = `[glab-status] checking workspaces for open MRs… (${index}/${total}: ${label})`;
-  process.stderr.write(`\r${bar}${" ".repeat(Math.max(0, 80 - bar.length))}`);
-  if (index === total) process.stderr.write("\n");
-}
 
 const cfg = loadConfig(configDir(), (m) => console.error(`[glab-status] config: ${m}`));
 const log = hookLogger(cfg.debug);
@@ -68,41 +64,50 @@ async function main(): Promise<void> {
     return;
   }
 
-  const glab = createGlabClient(cfg);
-  console.error(`[glab-status] checking ${workspaces.length} workspace${workspaces.length === 1 ? "" : "s"} for open MRs…`);
-  const { rows, aborted } = await collectRows(workspaces, cfg, log, glab, (ws, i, total) => printProgress(i, total, ws.label));
-  if (aborted) console.error("[glab-status] stopped early: glab is not usable (see the message above)");
+  const rows = sortRows(collectRows(workspaces));
   if (rows.length === 0) {
-    console.error("[glab-status] no open merge requests found across tracked workspaces");
+    console.error("[glab-status] no open MRs in the sidebar right now (nothing cached, or none tracked)");
     return;
   }
 
-  const sorted = sortRows(rows);
-  const { header, lines } = formatRows(sorted);
+  const { header, lines } = formatRows(rows);
   const selection = await pick(header, lines);
   if (!selection) return; // cancelled, or fzf couldn't run
 
   const index = Number(selection.split("\t", 1)[0]);
-  const row = sorted[index];
+  const row = rows[index];
   if (!row) return;
-  if (!row.webUrl) {
-    console.error(`[glab-status] ${row.repo} !${row.iid} has no web URL`);
+
+  const iid = /^!(\d+)/.exec(row.token)?.[1];
+  if (!iid) {
+    console.error(`[glab-status] could not parse an MR number out of "${row.token}"`);
     return;
   }
 
-  if (await focusOrOpenTab(cfg, row.webUrl, { log })) return;
+  // Only now -- for the one MR the user actually picked -- do we touch glab
+  // at all, to resolve its URL (for tab-reuse) before opening it.
+  const glab = createGlabClient(cfg);
+  const view = await glab.mrView(iid, row.workspace.checkoutPath);
+  const mr = view.ok ? parseMrView(view.stdout) : null;
 
   const env: Record<string, string> = { NO_COLOR: "1" };
   if (cfg.host) env.GITLAB_HOST = cfg.host;
-  const opened = await runCommand([resolveGlabPath(cfg), "mr", "view", String(row.iid), "--web"], {
+
+  if (mr?.webUrl && (await focusOrOpenTab(cfg, mr.webUrl, { log }))) return;
+
+  const opened = await runCommand([resolveGlabPath(cfg), "mr", "view", iid, "--web"], {
     cwd: row.workspace.checkoutPath,
     env,
   });
   if (opened.ok) return;
-  if (!opened.ok) log.debug(`glab mr view --web failed: ${briefError(opened)}`);
+  log.debug(`glab mr view --web failed: ${briefError(opened)}`);
 
-  await showNotification(`MR !${row.iid}`, row.webUrl);
-  console.error(`[glab-status] could not open a browser; MR URL: ${row.webUrl}`);
+  if (mr?.webUrl) {
+    await showNotification(`MR !${iid}`, mr.webUrl);
+    console.error(`[glab-status] could not open a browser; MR URL: ${mr.webUrl}`);
+  } else {
+    console.error(`[glab-status] could not open !${iid} (${row.repo}) in a browser`);
+  }
 }
 
 main().catch((err) => {

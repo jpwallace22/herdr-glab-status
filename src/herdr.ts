@@ -5,12 +5,20 @@ export interface Workspace {
   workspaceId: string;
   label: string;
   checkoutPath: string;
+  /** The `$mr` token this workspace is currently showing in the sidebar
+   * (see label.ts's formatLabel), read straight from `herdr workspace
+   * list`'s cached state -- not re-fetched from glab. null if there is
+   * none (no MR, or the token hasn't been reported/has expired). Optional
+   * on the type so existing Workspace literals elsewhere (tests, mostly)
+   * don't all need updating; toWorkspace() below always sets it. */
+  mrToken?: string | null;
 }
 
 interface RawWorkspace {
   workspace_id?: unknown;
   label?: unknown;
   worktree?: { checkout_path?: unknown } | null;
+  tokens?: { mr?: unknown } | null;
 }
 
 function toWorkspace(raw: unknown): Workspace | null {
@@ -21,7 +29,13 @@ function toWorkspace(raw: unknown): Workspace | null {
   if (typeof id !== "string" || id === "") return null;
   // Workspaces without a checkout (no worktree) have nothing to look up.
   if (typeof path !== "string" || path === "") return null;
-  return { workspaceId: id, label: typeof ws.label === "string" ? ws.label : id, checkoutPath: path };
+  const mr = ws.tokens?.mr;
+  return {
+    workspaceId: id,
+    label: typeof ws.label === "string" ? ws.label : id,
+    checkoutPath: path,
+    mrToken: typeof mr === "string" && mr !== "" ? mr : null,
+  };
 }
 
 // Accepts the `herdr workspace list` payload ({result:{workspaces:[...]}}),
