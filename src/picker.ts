@@ -1,66 +1,90 @@
-// Data + formatting for the `pick-mr` action: one row per workspace's
-// current `$mr` sidebar token, ready to hand to fzf.
-//
-// This is deliberately just a read of what herdr already has cached from
-// the background poller / event-driven refresh (`herdr workspace list`'s
-// per-workspace `tokens.mr`, see src/herdr.ts) -- no glab call, no network
-// round trip, nothing to wait on. It shows exactly what the sidebar is
-// already showing, not a fresher, slower re-check: pick-mr is a picker over
-// current status, not another refresh. If a token looks stale, that's what
-// `herdr plugin action invoke refresh --plugin glab-status` (or waiting for
-// the next poll cycle) is for, same as it always was.
+// Presentation for the pick-mr board: filtering, sorting, and fzf-ready
+// formatting over BoardRow[] (src/board.ts computes and caches that data;
+// this module never touches glab or herdr, it's pure and synchronous).
 
-import type { Workspace } from "./herdr";
+import type { BoardFilters } from "./board-filters";
+import type { BoardRow } from "./board";
+import { pipelineSymbol } from "./label";
 
-export interface MrRow {
-  workspace: Workspace;
-  repo: string;
-  /** The raw `$mr` token, e.g. "!581 ✖ ✎1" or "!66 draft ✔" (see
-   * label.ts's formatLabel for the grammar). */
-  token: string;
+// s/d/m filters (see src/board-filters.ts). `currentUsername` is null when
+// it couldn't be determined (see board.ts's fetchCurrentUsername) -- mine
+// filtering is then a no-op rather than hiding everything, since "mine" is
+// unknowable, not "nothing is mine".
+export function applyFilters(rows: BoardRow[], filters: BoardFilters, currentUsername: string | null): BoardRow[] {
+  return rows.filter((row) => {
+    if (!filters.showDrafts && row.draft) return false;
+    if (filters.mineOnly && currentUsername && row.authorUsername !== currentUsername) return false;
+    if (filters.scopeRepo && row.repoName !== filters.scopeRepo) return false;
+    return true;
+  });
 }
 
-// merged/closed MRs still carry a token (so the sidebar can show them
-// briefly) but aren't "open" -- formatLabel puts the literal word right
-// after the iid, so this mirrors that grammar rather than re-deriving state
-// from scratch.
-const NOT_OPEN = /^!\d+ (?:merged|closed)(?:\s|$)/;
-
-// One row per workspace with an open MR's token. Workspaces with no token
-// (no MR, or the token has expired) or a merged/closed one are left out,
-// same as they'd show nothing (or a token you can't act on) in the sidebar.
-export function collectRows(workspaces: Workspace[]): MrRow[] {
-  const rows: MrRow[] = [];
-  for (const workspace of workspaces) {
-    const token = workspace.mrToken;
-    if (!token || NOT_OPEN.test(token)) continue;
-    rows.push({ workspace, repo: workspace.label, token });
-  }
-  return rows;
-}
-
-// Higher = needs attention sooner. Read straight off the token's own
-// grammar rather than re-parsing structured fields we don't have here: a
-// failed pipeline (✖) outweighs everything else, each unresolved thread
-// (✎N) adds a bit, and a draft sinks to the bottom since it's not usually
-// waiting on anyone yet.
-export function attentionScore(row: MrRow): number {
+// Higher = needs attention sooner. A failed pipeline outweighs everything
+// else; unresolved threads and missing approvals matter but less; drafts
+// sink to the bottom since they're not usually waiting on anyone yet.
+export function attentionScore(row: BoardRow): number {
   let score = 0;
-  if (row.token.includes("✖")) score += 1000;
-  else if (row.token.includes("↻")) score += 5;
-  const unresolved = /✎(\d+)/.exec(row.token);
-  if (unresolved) score += Math.min(Number(unresolved[1]), 20) * 10;
-  if (/(?:^|\s)draft(?:\s|$)/.test(row.token)) score -= 50;
+  if (row.pipelineStatus === "failed") score += 1000;
+  else if (row.pipelineStatus === "running") score += 5;
+  if (row.unresolved !== null) score += Math.min(row.unresolved, 20) * 10;
+  if (row.approvals) {
+    const missing = row.approvals.required - row.approvals.given;
+    if (missing > 0) score += missing * 15;
+  }
+  if (row.draft) score -= 50;
   return score;
 }
 
-// Most attention-needing first; ties broken by repo name.
-export function sortRows(rows: MrRow[]): MrRow[] {
-  return [...rows].sort((a, b) => attentionScore(b) - attentionScore(a) || a.repo.localeCompare(b.repo));
+// Most attention-needing first; ties broken by comment count, then title.
+export function sortRows(rows: BoardRow[]): BoardRow[] {
+  return [...rows].sort((a, b) => {
+    const byScore = attentionScore(b) - attentionScore(a);
+    if (byScore !== 0) return byScore;
+    const byComments = (b.comments ?? 0) - (a.comments ?? 0);
+    if (byComments !== 0) return byComments;
+    return a.title.localeCompare(b.title);
+  });
 }
 
 function pad(s: string, width: number): string {
   return s.length >= width ? s : s + " ".repeat(width - s.length);
+}
+
+function ciCell(row: BoardRow): string {
+  if (!row.pipelineStatus) return "-";
+  const symbol = pipelineSymbol(row.pipelineStatus);
+  return symbol ? `${symbol} ${row.pipelineStatus}` : row.pipelineStatus;
+}
+
+function apprCell(row: BoardRow): string {
+  return row.approvals ? `${row.approvals.given}/${row.approvals.required}` : "?";
+}
+
+// Zero and "not counted" render the same as the sidebar label does (no ✎N
+// segment): there's nothing here that needs a reviewer's attention either way.
+function thrCell(row: BoardRow): string {
+  return row.unresolved ? String(row.unresolved) : "-";
+}
+
+function cmtCell(row: BoardRow): string {
+  return row.comments === null ? "-" : String(row.comments);
+}
+
+function titleCell(row: BoardRow): string {
+  return row.draft ? `[draft] ${row.title}` : row.title;
+}
+
+const MINUTE = 60_000;
+const HOUR = 60 * MINUTE;
+const DAY = 24 * HOUR;
+
+function ageCell(row: BoardRow, now: number = Date.now()): string {
+  if (!row.createdAt) return "?";
+  const ms = now - Date.parse(row.createdAt);
+  if (!Number.isFinite(ms) || ms < 0) return "?";
+  if (ms < HOUR) return `${Math.max(1, Math.floor(ms / MINUTE))}m`;
+  if (ms < DAY) return `${Math.floor(ms / HOUR)}h`;
+  return `${Math.floor(ms / DAY)}d`;
 }
 
 export interface FormattedRows {
@@ -71,11 +95,19 @@ export interface FormattedRows {
   lines: string[];
 }
 
-// REPO padded to the widest label (or the header, if that's wider); the
-// token is left ragged since it's short and already fixed-format.
-export function formatRows(rows: MrRow[]): FormattedRows {
-  const repoWidth = Math.max("REPO".length, ...rows.map((r) => r.repo.length));
-  const header = `${pad("REPO", repoWidth)}  MR`;
-  const lines = rows.map((row, index) => `${index}\t${pad(row.repo, repoWidth)}  ${row.token}`);
+const COLUMN_TITLES = ["REPO", "MR", "CI", "APPR", "THR", "CMT", "AGE"] as const;
+
+// Fixed-width columns sized to the widest cell (or the header, if that's
+// wider); TITLE left ragged since it's last and terminals/fzf wrap it anyway.
+export function formatRows(rows: BoardRow[], now: number = Date.now()): FormattedRows {
+  const mrCell = (r: BoardRow) => `!${r.iid}`;
+  const cells: ((r: BoardRow) => string)[] = [(r) => r.repo, mrCell, ciCell, apprCell, thrCell, cmtCell, (r) => ageCell(r, now)];
+  const widths = COLUMN_TITLES.map((title, i) => Math.max(title.length, ...rows.map((r) => cells[i]!(r).length)));
+
+  const header = COLUMN_TITLES.map((title, i) => pad(title, widths[i]!)).join("  ").concat("  TITLE");
+  const lines = rows.map((row, index) => {
+    const visible = cells.map((cell, i) => pad(cell(row), widths[i]!)).join("  ").concat(`  ${titleCell(row)}`);
+    return `${index}\t${visible}`;
+  });
   return { header, lines };
 }

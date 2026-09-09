@@ -10,10 +10,12 @@
 // Never fail loudly: a noisy hook would spam the plugin log on every focus
 // change. Problems go to stderr, which `herdr plugin log list` shows.
 
+import { refreshBoard } from "../src/board";
 import { loadConfig } from "../src/config";
 import { configDir } from "../src/env";
 import { resolveEventWorkspaceId } from "../src/events";
-import { getWorkspace } from "../src/herdr";
+import { createGlabClient } from "../src/glab";
+import { getWorkspace, listWorkspaces } from "../src/herdr";
 import { hookLogger } from "../src/log";
 import { clearStopRequest, ensurePoller } from "../src/poller-control";
 import { refreshAll, refreshWorkspaces } from "../src/refresh";
@@ -31,6 +33,17 @@ async function main(): Promise<void> {
     ensurePoller(log);
     const summary = await refreshAll(cfg, log);
     log.debug(`refresh: ${summary.reported} reported, ${summary.cleared} cleared, ${summary.kept} kept, ${summary.failed} failed`);
+
+    // Also keeps the pick-mr board's cache in step with an explicit
+    // refresh, not just the poller's own cycle -- see src/board.ts.
+    if (!summary.herdrUnavailable && !summary.aborted) {
+      try {
+        const workspaces = await listWorkspaces();
+        if (workspaces) await refreshBoard(workspaces, cfg, log, createGlabClient(cfg));
+      } catch (err) {
+        log.warn(`board refresh failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
     return;
   }
 

@@ -12,12 +12,17 @@ export interface Workspace {
    * on the type so existing Workspace literals elsewhere (tests, mostly)
    * don't all need updating; toWorkspace() below always sets it. */
   mrToken?: string | null;
+  /** worktree.repo_name from `herdr workspace list` -- the actual git repo
+   * identity, not the (possibly worktree-specific) workspace label. Used by
+   * the pick-mr board's "scope" filter (same repo as the workspace the
+   * picker was opened from). Optional for the same reason as mrToken. */
+  repoName?: string | null;
 }
 
 interface RawWorkspace {
   workspace_id?: unknown;
   label?: unknown;
-  worktree?: { checkout_path?: unknown } | null;
+  worktree?: { checkout_path?: unknown; repo_name?: unknown } | null;
   tokens?: { mr?: unknown } | null;
 }
 
@@ -30,10 +35,12 @@ function toWorkspace(raw: unknown): Workspace | null {
   // Workspaces without a checkout (no worktree) have nothing to look up.
   if (typeof path !== "string" || path === "") return null;
   const mr = ws.tokens?.mr;
+  const repoName = ws.worktree?.repo_name;
   return {
     workspaceId: id,
     label: typeof ws.label === "string" ? ws.label : id,
     checkoutPath: path,
+    repoName: typeof repoName === "string" && repoName !== "" ? repoName : null,
     mrToken: typeof mr === "string" && mr !== "" ? mr : null,
   };
 }

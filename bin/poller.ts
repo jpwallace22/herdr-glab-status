@@ -7,8 +7,11 @@
 // Output is not captured by herdr; it goes to <state dir>/poller.log.
 
 import { existsSync } from "node:fs";
+import { refreshBoard } from "../src/board";
 import { loadConfig } from "../src/config";
 import { configDir, herdrSocketPath, stateDir } from "../src/env";
+import { createGlabClient } from "../src/glab";
+import { listWorkspaces } from "../src/herdr";
 import { fileLogger } from "../src/log";
 import {
   isAlive,
@@ -105,6 +108,19 @@ async function main(): Promise<void> {
     } else if (abortLogged) {
       abortLogged = false;
       log.info("glab is working again");
+    }
+
+    // Rich pick-mr board data (title, comments, approvals -- fields the
+    // sidebar's own $mr token never needed) is refreshed on the same
+    // cycle, but only when the token refresh above actually had usable
+    // glab access; there's nothing to gain re-deriving the same failure.
+    if (!summary.herdrUnavailable && !summary.aborted) {
+      try {
+        const workspaces = await listWorkspaces();
+        if (workspaces) await refreshBoard(workspaces, cfg, log, createGlabClient(cfg));
+      } catch (err) {
+        log.warn(`board refresh failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
     }
 
     const retrying = shouldRetrySoon(summary);

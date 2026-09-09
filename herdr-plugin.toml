@@ -58,11 +58,14 @@ title = "Stop GitLab MR status poller"
 contexts = ["workspace"]
 command = ["bun", "bin/stop.ts"]
 
-# fzf-pick one of your open MRs across every tracked workspace, then open it.
-# The interactive fzf UI itself runs as the "picker" plugin pane below (a
-# real herdr pane gets a real terminal; an action's own command does not).
-# This action just opens/focuses that pane, the same way the sessionizer
-# plugin's "pick" action opens its own picker pane.
+# fzf-pick one of your open MRs across every tracked workspace (reads the
+# board src/board.ts caches -- no glab call at open time). Enter jumps to
+# that MR's workspace; o opens it in the browser instead; r refreshes the
+# cache; d/m/s toggle drafts/mine/scope filters. The interactive fzf UI
+# itself runs as the "picker" plugin pane below (a real herdr pane gets a
+# real terminal; an action's own command does not). This action just
+# opens/focuses that pane, the same way the sessionizer plugin's "pick"
+# action opens its own picker pane.
 [[actions]]
 id = "pick-mr"
 title = "Pick a GitLab MR (fzf)"

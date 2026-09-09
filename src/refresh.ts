@@ -11,7 +11,7 @@ import { recordCheck } from "./throttle";
 export type Decision =
   | { kind: "clear"; reason: string }
   | { kind: "keep"; reason: string }
-  | { kind: "report"; label: string; mr: MrSummary; unresolved: number | null; warning: string | null }
+  | { kind: "report"; label: string; mr: MrSummary; unresolved: number | null; warning: string | null; branch: string }
   | { kind: "abort"; failure: "auth" | "missing"; message: string };
 
 const clear = (reason: string): Decision => ({ kind: "clear", reason });
@@ -67,7 +67,7 @@ export async function inspectWorkspace(ws: Workspace, cfg: Config, glab: GlabCli
     }
   }
 
-  return { kind: "report", label: formatLabel(mr, unresolved), mr, unresolved, warning };
+  return { kind: "report", label: formatLabel(mr, unresolved), mr, unresolved, warning, branch };
 }
 
 function isAbort(value: unknown): value is Extract<Decision, { kind: "abort" }> {

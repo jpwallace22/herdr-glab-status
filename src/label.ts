@@ -11,6 +11,17 @@ export interface MrSummary {
   pipelineStatus: string | null;
   webUrl: string | null;
   projectId: number | null;
+  /** Only read by src/board.ts (the pick-mr board); the sidebar label
+   * doesn't show it. */
+  title: string;
+  /** user_notes_count from the GitLab API: total comments, not just
+   * unresolved threads. Only read by src/board.ts. */
+  commentCount: number | null;
+  /** created_at from the GitLab API, ISO 8601. Only read by src/board.ts. */
+  createdAt: string | null;
+  /** author.username from the GitLab API. Only read by src/board.ts, for
+   * the "mine" filter. */
+  authorUsername: string | null;
 }
 
 export const PIPELINE_SYMBOLS: Readonly<Record<string, string>> = {
@@ -66,6 +77,11 @@ export function parseMrView(stdout: string): MrSummary | null {
     pipeline && typeof pipeline === "object" && typeof (pipeline as { status?: unknown }).status === "string"
       ? ((pipeline as { status: string }).status)
       : null;
+  const author = mr.author;
+  const authorUsername =
+    author && typeof author === "object" && typeof (author as { username?: unknown }).username === "string"
+      ? (author as { username: string }).username
+      : null;
   return {
     iid: mr.iid,
     state: typeof mr.state === "string" ? mr.state : "opened",
@@ -73,5 +89,9 @@ export function parseMrView(stdout: string): MrSummary | null {
     pipelineStatus,
     webUrl: typeof mr.web_url === "string" ? mr.web_url : null,
     projectId: typeof mr.project_id === "number" ? mr.project_id : null,
+    title: typeof mr.title === "string" ? mr.title : "",
+    commentCount: typeof mr.user_notes_count === "number" ? mr.user_notes_count : null,
+    createdAt: typeof mr.created_at === "string" ? mr.created_at : null,
+    authorUsername,
   };
 }

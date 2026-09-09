@@ -65,6 +65,14 @@ export interface GlabClient {
     perPage: number,
     cwd: string,
   ): Promise<CommandResult>;
+  /** `glab api projects/:id/merge_requests/:iid/approvals`. Optional: only
+   * src/board.ts calls this (once per open MR per poller cycle); the
+   * sidebar's own token refresh doesn't, so existing GlabClient fakes don't
+   * need to implement it. */
+  approvals?(projectId: number | null, iid: number, cwd: string): Promise<CommandResult>;
+  /** `glab api user`: the authenticated user, for the board's "mine"
+   * filter. Optional for the same reason as `approvals`. */
+  currentUser?(cwd: string): Promise<CommandResult>;
 }
 
 // Without this, a dead network turns each `glab` call into glab's own ~42s
@@ -91,6 +99,14 @@ export function createGlabClient(cfg: Config): GlabClient {
       const project = projectId === null ? ":id" : String(projectId);
       const endpoint = `projects/${project}/merge_requests/${iid}/discussions?per_page=${perPage}&page=${page}`;
       return runCommand([glab, "api", endpoint], { cwd, env, timeoutMs: GLAB_CALL_TIMEOUT_MS });
+    },
+    approvals(projectId, iid, cwd) {
+      const project = projectId === null ? ":id" : String(projectId);
+      const endpoint = `projects/${project}/merge_requests/${iid}/approvals`;
+      return runCommand([glab, "api", endpoint], { cwd, env, timeoutMs: GLAB_CALL_TIMEOUT_MS });
+    },
+    currentUser(cwd) {
+      return runCommand([glab, "api", "user"], { cwd, env, timeoutMs: GLAB_CALL_TIMEOUT_MS });
     },
   };
 }
