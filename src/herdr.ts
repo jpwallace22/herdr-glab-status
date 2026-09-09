@@ -127,6 +127,56 @@ export async function getWorkspaceStatus(workspaceId: string): Promise<Workspace
   }
 }
 
+// `herdr agent list` returns only panes with a detected agent -- exactly
+// the source sessionizer's own agent view uses for its own fzf preview
+// (see its bundled docs: "agent read gives scrollback for an fzf preview
+// of what the agent is doing"). Used by the pick-mr board's preview pane
+// to find which pane, if any, in the highlighted row's workspace to read.
+export interface AgentInfo {
+  paneId: string;
+  workspaceId: string;
+  agent: string;
+  agentStatus: string;
+}
+
+export function parseAgentList(payload: unknown): AgentInfo[] {
+  if (payload === null || typeof payload !== "object") return [];
+  const result = (payload as { result?: unknown }).result;
+  const container = result && typeof result === "object" ? (result as Record<string, unknown>) : {};
+  const items = Array.isArray((container as Record<string, unknown>).agents) ? (container as { agents: unknown[] }).agents : [];
+  const out: AgentInfo[] = [];
+  for (const item of items) {
+    if (item === null || typeof item !== "object") continue;
+    const a = item as Record<string, unknown>;
+    if (typeof a.pane_id !== "string" || typeof a.workspace_id !== "string") continue;
+    out.push({
+      paneId: a.pane_id,
+      workspaceId: a.workspace_id,
+      agent: typeof a.agent === "string" ? a.agent : "unknown",
+      agentStatus: typeof a.agent_status === "string" ? a.agent_status : "unknown",
+    });
+  }
+  return out;
+}
+
+export async function listAgents(): Promise<AgentInfo[] | null> {
+  const result = await runHerdr(["agent", "list"]);
+  if (!result.ok) return null;
+  try {
+    return parseAgentList(JSON.parse(result.stdout));
+  } catch {
+    return null;
+  }
+}
+
+// Scrollback text for one pane, via `herdr agent read` -- the CLI's own
+// documented "preview material" tool. null on any failure (no agent there,
+// herdr unreachable, etc.), never throws.
+export async function readAgent(paneId: string, lines: number): Promise<string | null> {
+  const result = await runHerdr(["agent", "read", paneId, "--lines", String(lines)]);
+  return result.ok ? result.stdout : null;
+}
+
 export function reportToken(workspaceId: string, label: string, ttlMs: number, seq: number): Promise<CommandResult> {
   return runHerdr([
     "workspace",

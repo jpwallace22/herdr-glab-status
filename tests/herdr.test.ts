@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { resolveEventWorkspaceId } from "../src/events";
-import { parseWorkspaceStatus, parseWorkspaces } from "../src/herdr";
+import { parseAgentList, parseWorkspaceStatus, parseWorkspaces } from "../src/herdr";
 
 const listPayload = {
   id: "cli:workspace:list",
@@ -106,5 +106,30 @@ describe("parseWorkspaceStatus", () => {
     expect(parseWorkspaceStatus({})).toBeNull();
     expect(parseWorkspaceStatus(null)).toBeNull();
     expect(parseWorkspaceStatus("nope")).toBeNull();
+  });
+});
+
+describe("parseAgentList", () => {
+  test("accepts the `agent list` payload shape", () => {
+    const payload = {
+      id: "cli:agent:list",
+      result: {
+        agents: [
+          { agent: "claude", agent_status: "working", pane_id: "wD:p1", workspace_id: "wD" },
+          { agent: "claude", agent_status: "idle", pane_id: "wG:p1", workspace_id: "wG" },
+        ],
+      },
+    };
+    expect(parseAgentList(payload)).toEqual([
+      { paneId: "wD:p1", workspaceId: "wD", agent: "claude", agentStatus: "working" },
+      { paneId: "wG:p1", workspaceId: "wG", agent: "claude", agentStatus: "idle" },
+    ]);
+  });
+
+  test("skips entries missing pane_id/workspace_id, and tolerates junk", () => {
+    expect(parseAgentList({ result: { agents: [{ agent: "claude" }, null, 3] } })).toEqual([]);
+    expect(parseAgentList(null)).toEqual([]);
+    expect(parseAgentList("nope")).toEqual([]);
+    expect(parseAgentList({ result: {} })).toEqual([]);
   });
 });

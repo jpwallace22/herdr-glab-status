@@ -147,11 +147,15 @@ toggle it back. It requires `fzf` on PATH (`brew install fzf`) and fails
 with a clear message if it's missing.
 
 The right-hand preview pane shows the **workspace** the highlighted row
-lives in, not a restatement of the row itself: its label, repo, branch,
-checkout path, and live herdr state (agent status, pane/tab counts, whether
-it's currently focused) via `herdr workspace get` — the one call in this
-whole picker that isn't just reading a cache, since that state is
-inherently live.
+lives in, not a restatement of the row itself: a small identity block
+(label, repo, branch, checkout path, live pane/tab counts and focus state
+via `herdr workspace get`), then the actual live scrollback of whichever
+pane in that workspace has a detected agent (`herdr agent list` +
+`herdr agent read`) — the same source and intent as the `sessionizer`
+plugin's own agent-view preview. All local socket calls, not glab; the one
+part of this whole picker that isn't just reading a cache, since live pane
+content and agent/focus state aren't something a poller cycle could
+usefully snapshot.
 
 fzf needs a real terminal — it reads the row list from stdin but drives its
 own UI straight over `/dev/tty` — and a plugin action's own command doesn't

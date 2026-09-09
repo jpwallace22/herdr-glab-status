@@ -9,23 +9,27 @@
 // Flags: --refresh, --toggle-drafts, --toggle-mine, --toggle-scope (any
 // combination), or --preview <index> on its own (fzf's right-hand preview
 // for the row currently highlighted -- see bin/pick-mr.ts's `--preview`
-// binding). --preview does one live `herdr workspace get` call (a local
-// socket call, not glab) for the highlighted row's current agent/pane/tab
-// state -- the one part of this whole picker that isn't purely reading a
-// cache, because that state is inherently live, not something a poller
-// cycle could usefully snapshot.
+// binding). --preview does a few live local herdr calls (workspace state,
+// which pane if any has an agent, that pane's scrollback) -- the one part
+// of this whole picker that isn't purely reading a cache, because that
+// state is inherently live, not something a poller cycle could usefully
+// snapshot. None of it touches glab.
 
 import { toggleDrafts, toggleMine, toggleScope, readFilters } from "../src/board-filters";
 import { readBoardCache, readCachedUsername, refreshBoard } from "../src/board";
 import { loadConfig } from "../src/config";
 import { configDir } from "../src/env";
 import { createGlabClient } from "../src/glab";
-import { getWorkspace, getWorkspaceStatus, listWorkspaces } from "../src/herdr";
+import { getWorkspace, getWorkspaceStatus, listAgents, listWorkspaces, readAgent } from "../src/herdr";
 import { hookLogger } from "../src/log";
 import { applyFilters, formatPreview, formatRows, sortRows } from "../src/picker";
 
 const cfg = loadConfig(configDir(), (m) => console.error(`[glab-status] config: ${m}`));
 const log = hookLogger(cfg.debug);
+
+// Generous scrollback: the preview pane is usually the full height of a
+// large overlay, and this is just a local read, not a network call.
+const PREVIEW_SCROLLBACK_LINES = 300;
 
 // The repo of the workspace this pane belongs to, for "scope" -- plugin
 // panes get HERDR_WORKSPACE_ID the same as actions do.
@@ -53,6 +57,19 @@ async function main(): Promise<void> {
       return;
     }
     console.log(formatPreview(row, await getWorkspaceStatus(row.workspaceId)));
+
+    // The actual workspace, not just facts about it: whichever pane in it
+    // has a detected agent, live -- same source and intent as sessionizer's
+    // own agent-view preview.
+    const agents = await listAgents();
+    const agent = agents?.find((a) => a.workspaceId === row.workspaceId) ?? null;
+    const content = agent ? await readAgent(agent.paneId, PREVIEW_SCROLLBACK_LINES) : null;
+    console.log("");
+    if (content?.trim()) {
+      console.log(content.trimEnd());
+    } else {
+      console.log(agent ? "(pane has no scrollback yet)" : "(no agent detected in this workspace)");
+    }
     return;
   }
 
