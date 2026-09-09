@@ -73,11 +73,13 @@ async function pick(header: string, lines: string[]): Promise<string | null> {
         "--bind",
         `s:reload(${BOARD_ROWS} --toggle-scope)`,
         // Right-hand pane: which workspace the highlighted row lives in,
-        // plus the MR detail the compact row has no room for.
+        // plus that workspace's live agent pane content. `follow` scrolls
+        // to the bottom of the scrollback (the current/most recent state)
+        // instead of showing the oldest lines first.
         "--preview",
         `${BOARD_ROWS} --preview {1}`,
         "--preview-window",
-        "right,45%,border-left",
+        "right,45%,border-left,follow",
       ],
       { stdin: input, stdout: "pipe", stderr: "inherit" },
     );

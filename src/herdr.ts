@@ -170,10 +170,12 @@ export async function listAgents(): Promise<AgentInfo[] | null> {
 }
 
 // Scrollback text for one pane, via `herdr agent read` -- the CLI's own
-// documented "preview material" tool. null on any failure (no agent there,
-// herdr unreachable, etc.), never throws.
+// documented "preview material" tool. `--ansi` keeps the pane's original
+// color codes (fzf renders ANSI in preview output by default) instead of
+// herdr's plain-text default. null on any failure (no agent there, herdr
+// unreachable, etc.), never throws.
 export async function readAgent(paneId: string, lines: number): Promise<string | null> {
-  const result = await runHerdr(["agent", "read", paneId, "--lines", String(lines)]);
+  const result = await runHerdr(["agent", "read", paneId, "--lines", String(lines), "--ansi"]);
   return result.ok ? result.stdout : null;
 }
 
