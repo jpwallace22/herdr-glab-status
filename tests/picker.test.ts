@@ -90,6 +90,22 @@ describe("collectRows", () => {
     });
   });
 
+  test("onProgress fires once per workspace, in order, even across a throw and an abort", async () => {
+    const glab = fakeGlab({
+      "/a": { branch: "b", mrs: { b: mr(1) } },
+      "/c": { branch: "d", mrs: { d: UNAUTHORIZED } },
+    });
+    glab.currentBranch = async (cwd) => {
+      if (cwd === "/z") throw new Error("kaboom");
+      return { "/a": "b", "/c": "d" }[cwd] ?? null;
+    };
+    const calls: string[] = [];
+    await collectRows([ws("wA", "/a"), ws("wZ", "/z"), ws("wC", "/c")], cfg, silentLogger, glab, (workspace, i, total) =>
+      calls.push(`${i}/${total} ${workspace.label}`),
+    );
+    expect(calls).toEqual(["1/3 wA", "2/3 wZ", "3/3 wC"]);
+  });
+
   test("skips merged/closed MRs", async () => {
     const glab = fakeGlab({ "/a": { branch: "b", mrs: { b: mr(1, { state: "merged" }) } } });
     const { rows } = await collectRows([ws("wA", "/a")], cfg, silentLogger, glab);

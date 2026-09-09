@@ -41,6 +41,13 @@ export interface CollectResult {
   aborted: boolean;
 }
 
+// Called after each workspace is inspected, so a caller (bin/pick-mr.ts) can
+// show progress: this walk is sequential and network-bound (a git branch
+// check, an mr view, discussion pages, an approvals call — several of which
+// carry a 15-20s timeout), so collecting rows across a handful of workspaces
+// can take the better part of a minute with nothing else to show for it.
+export type ProgressCallback = (workspace: Workspace, index: number, total: number) => void;
+
 // Fetch approvals for one MR. Best-effort: any failure (including a
 // GlabClient without the optional `approvals` method) yields null rather
 // than dropping the row, since APPR is one column among several.
@@ -57,16 +64,25 @@ async function fetchApprovals(glab: GlabClient, projectId: number | null, iid: n
 // silently skipped, same as they'd be blank in the sidebar. An abort (glab
 // missing or unauthenticated) stops the walk early and is reported to the
 // caller instead of throwing, mirroring refreshWorkspaces.
-export async function collectRows(workspaces: Workspace[], cfg: Config, log: Logger, glab: GlabClient): Promise<CollectResult> {
+export async function collectRows(
+  workspaces: Workspace[],
+  cfg: Config,
+  log: Logger,
+  glab: GlabClient,
+  onProgress?: ProgressCallback,
+): Promise<CollectResult> {
   const rows: MrRow[] = [];
-  for (const ws of workspaces) {
+  for (let i = 0; i < workspaces.length; i++) {
+    const ws = workspaces[i]!;
     let decision: Awaited<ReturnType<typeof inspectWorkspace>>;
     try {
       decision = await inspectWorkspace(ws, cfg, glab);
     } catch (err) {
       log.warn(`${ws.label}: ${err instanceof Error ? err.message : String(err)}`);
+      onProgress?.(ws, i + 1, workspaces.length);
       continue;
     }
+    onProgress?.(ws, i + 1, workspaces.length);
     if (decision.kind === "abort") {
       log.error(decision.message);
       return { rows, aborted: true };

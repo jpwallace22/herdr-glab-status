@@ -17,6 +17,16 @@ import { listWorkspaces, showNotification } from "../src/herdr";
 import { hookLogger } from "../src/log";
 import { collectRows, formatRows, sortRows } from "../src/picker";
 
+// Collecting rows is sequential and network-bound (see src/picker.ts), so it
+// can take the better part of a minute across several workspaces with
+// nothing else on screen. Without this, that wait is indistinguishable from
+// the picker having done nothing at all.
+function printProgress(index: number, total: number, label: string): void {
+  const bar = `[glab-status] checking workspaces for open MRs… (${index}/${total}: ${label})`;
+  process.stderr.write(`\r${bar}${" ".repeat(Math.max(0, 80 - bar.length))}`);
+  if (index === total) process.stderr.write("\n");
+}
+
 const cfg = loadConfig(configDir(), (m) => console.error(`[glab-status] config: ${m}`));
 const log = hookLogger(cfg.debug);
 
@@ -59,7 +69,8 @@ async function main(): Promise<void> {
   }
 
   const glab = createGlabClient(cfg);
-  const { rows, aborted } = await collectRows(workspaces, cfg, log, glab);
+  console.error(`[glab-status] checking ${workspaces.length} workspace${workspaces.length === 1 ? "" : "s"} for open MRs…`);
+  const { rows, aborted } = await collectRows(workspaces, cfg, log, glab, (ws, i, total) => printProgress(i, total, ws.label));
   if (aborted) console.error("[glab-status] stopped early: glab is not usable (see the message above)");
   if (rows.length === 0) {
     console.error("[glab-status] no open merge requests found across tracked workspaces");
