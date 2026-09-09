@@ -21,14 +21,14 @@ describe("board filters", () => {
   });
 
   test("round-trips through the file", () => {
-    writeFilters({ showDrafts: false, mineOnly: true, scopeRepo: "repo-a" }, path);
-    expect(readFilters(path)).toEqual({ showDrafts: false, mineOnly: true, scopeRepo: "repo-a" });
+    writeFilters({ draftsOnly: true, mineOnly: true, scopeRepo: "repo-a" }, path);
+    expect(readFilters(path)).toEqual({ draftsOnly: true, mineOnly: true, scopeRepo: "repo-a" });
   });
 
   test("toggleDrafts and toggleMine flip just their own field", () => {
     writeFilters(DEFAULT_FILTERS, path);
-    expect(toggleDrafts(path)).toEqual({ showDrafts: false, mineOnly: false, scopeRepo: null });
-    expect(toggleDrafts(path)).toEqual({ showDrafts: true, mineOnly: false, scopeRepo: null });
+    expect(toggleDrafts(path)).toEqual({ draftsOnly: true, mineOnly: false, scopeRepo: null });
+    expect(toggleDrafts(path)).toEqual({ draftsOnly: false, mineOnly: false, scopeRepo: null });
     expect(toggleMine(path)).toMatchObject({ mineOnly: true });
     expect(toggleMine(path)).toMatchObject({ mineOnly: false });
   });
@@ -48,7 +48,7 @@ describe("board filters", () => {
   test("malformed content on disk falls back to defaults", () => {
     Bun.write(path, "not json");
     expect(readFilters(path)).toEqual(DEFAULT_FILTERS);
-    Bun.write(path, JSON.stringify({ showDrafts: "nope" }));
+    Bun.write(path, JSON.stringify({ draftsOnly: "nope" }));
     expect(readFilters(path)).toEqual(DEFAULT_FILTERS);
   });
 });

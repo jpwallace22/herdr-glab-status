@@ -13,7 +13,7 @@ import { pipelineSymbol } from "./label";
 // unknowable, not "nothing is mine".
 export function applyFilters(rows: BoardRow[], filters: BoardFilters, currentUsername: string | null): BoardRow[] {
   return rows.filter((row) => {
-    if (!filters.showDrafts && row.draft) return false;
+    if (filters.draftsOnly && !row.draft) return false;
     if (filters.mineOnly && currentUsername && row.authorUsername !== currentUsername) return false;
     if (filters.scopeRepo && row.repoName !== filters.scopeRepo) return false;
     return true;
@@ -132,7 +132,7 @@ const COLUMN_TITLES = ["REPO", "MR", "CI", "APPR", "THR", "CMT", "AGE"] as const
 // Printed via `--footer` (fzf 0.63+; see bin/pick-mr.ts), pinned to the
 // bottom of the pane rather than mixed into the column header.
 export const KEY_LEGEND =
-  "[enter]: workspace   [ctrl-o]: browser   [ctrl-r]: refresh   [ctrl-d]: drafts   [alt-m]: mine   [ctrl-s]: scope   [esc]: quit";
+  "[enter]: workspace   [ctrl-o]: browser   [ctrl-r]: refresh   [ctrl-d]: drafts only   [alt-m]: mine only   [ctrl-s]: scope   [esc]: quit";
 
 // Column separator: three spaces (was two) for a bit more breathing room.
 const COLUMN_GAP = "   ";

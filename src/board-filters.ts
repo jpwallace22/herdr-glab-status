@@ -9,13 +9,17 @@ import { dirname, join } from "node:path";
 import { stateDir } from "./env";
 
 export interface BoardFilters {
-  showDrafts: boolean;
+  /** Isolate filter, same pattern as mineOnly/scopeRepo: false shows
+   * everything (drafts included, the default); true narrows down to
+   * *only* drafts. Not a show/hide toggle -- "filtering for drafts"
+   * means filtering the list down to drafts, not hiding them. */
+  draftsOnly: boolean;
   mineOnly: boolean;
   /** null = all repos; otherwise only rows whose repoName matches. */
   scopeRepo: string | null;
 }
 
-export const DEFAULT_FILTERS: Readonly<BoardFilters> = { showDrafts: true, mineOnly: false, scopeRepo: null };
+export const DEFAULT_FILTERS: Readonly<BoardFilters> = { draftsOnly: false, mineOnly: false, scopeRepo: null };
 
 export function filtersPath(dir: string = stateDir()): string {
   return join(dir, "mr-board-filters.json");
@@ -28,7 +32,7 @@ export function readFilters(path: string = filtersPath()): BoardFilters {
     if (data === null || typeof data !== "object") return { ...DEFAULT_FILTERS };
     const d = data as Record<string, unknown>;
     return {
-      showDrafts: typeof d.showDrafts === "boolean" ? d.showDrafts : DEFAULT_FILTERS.showDrafts,
+      draftsOnly: typeof d.draftsOnly === "boolean" ? d.draftsOnly : DEFAULT_FILTERS.draftsOnly,
       mineOnly: typeof d.mineOnly === "boolean" ? d.mineOnly : DEFAULT_FILTERS.mineOnly,
       scopeRepo: typeof d.scopeRepo === "string" && d.scopeRepo !== "" ? d.scopeRepo : null,
     };
@@ -44,7 +48,7 @@ export function writeFilters(filters: BoardFilters, path: string = filtersPath()
 
 export function toggleDrafts(path: string = filtersPath()): BoardFilters {
   const next = { ...readFilters(path) };
-  next.showDrafts = !next.showDrafts;
+  next.draftsOnly = !next.draftsOnly;
   writeFilters(next, path);
   return next;
 }

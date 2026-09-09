@@ -26,9 +26,9 @@ function row(overrides: Partial<BoardRow> = {}): BoardRow {
 }
 
 describe("applyFilters", () => {
-  test("showDrafts=false hides drafts, keeps everything else", () => {
+  test("draftsOnly=true narrows down to drafts; default shows everything", () => {
     const rows = [row({ iid: 1, draft: true }), row({ iid: 2, draft: false })];
-    expect(applyFilters(rows, { ...DEFAULT_FILTERS, showDrafts: false }, null).map((r) => r.iid)).toEqual([2]);
+    expect(applyFilters(rows, { ...DEFAULT_FILTERS, draftsOnly: true }, null).map((r) => r.iid)).toEqual([1]);
     expect(applyFilters(rows, DEFAULT_FILTERS, null).map((r) => r.iid)).toEqual([1, 2]);
   });
 

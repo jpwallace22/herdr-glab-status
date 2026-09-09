@@ -125,7 +125,7 @@ REPO          MR    CI        APPR  THR  CMT  AGE  TITLE
 catalog-ui    !581  ✖ failed  1/3   1    4    22m  feat: update catalog to use a11y-toolkit
 landing-ui    !622  ✔ success 2/3   -    53   3d   chore(e2e): add the service-operations-bot daily triage schedule
 
-[enter]: workspace   [ctrl-o]: browser   [ctrl-r]: refresh   [ctrl-d]: drafts   [alt-m]: mine   [ctrl-s]: scope   [esc]: quit
+[enter]: workspace   [ctrl-o]: browser   [ctrl-r]: refresh   [ctrl-d]: drafts only   [alt-m]: mine only   [ctrl-s]: scope   [esc]: quit
 ```
 
 Keys, once the list is up:
@@ -135,10 +135,15 @@ Keys, once the list is up:
 | `enter` | Jump to that MR's workspace (`herdr workspace focus`) |
 | `ctrl-o` | Open that MR in the browser instead, reusing `open-mr`'s tab-reuse and notification fallback |
 | `ctrl-r` | Refresh the cached data (a live glab pass, same as the `refresh` action) |
-| `ctrl-d` | Toggle showing draft MRs |
-| `alt-m` | Toggle showing only MRs you authored |
+| `ctrl-d` | Toggle narrowing the list down to *only* drafts (default: everything, drafts included) |
+| `alt-m` | Toggle narrowing the list down to *only* MRs you authored |
 | `ctrl-s` | Toggle scoping to the repo of the workspace you opened the picker from |
 | any other text | Fuzzy-filters the list, as usual for fzf |
+
+`ctrl-d`/`alt-m`/`ctrl-s` are all isolate filters (narrow down to X), not
+show/hide toggles — pressing one doesn't remove anything from view except
+by narrowing to a subset, the same way `ctrl-s` doesn't hide other repos'
+MRs so much as focus on one.
 
 Everything but `enter` is `ctrl-`-prefixed (or `alt-m` for mine — `ctrl-m`
 is the same byte terminals send for Enter, so it can't be bound
